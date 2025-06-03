@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Chat Assistant</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #6e8efb, #a777e3);
+        }
+        .container {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 2rem;
+            border-radius: 15px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+        }
+        .chat-button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 20px 0;
+        }
+        .chat-button:hover {
+            background: #45a049;
+            transform: scale(1.05);
+        }
+        .chat-button:active {
+            transform: scale(0.95);
+        }
+        .status {
+            margin-top: 20px;
+            font-size: 16px;
+            color: #666;
+        }
+        .recording {
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Voice Assistant</h1>
+        <button id="startChat" class="chat-button">Start Voice Chat</button>
+        <p id="status" class="status">Click to start chatting</p>
+    </div>
+
+    <script>
+        let ws = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let sessionId = null;
+        let isConnecting = false;
+        const startButton = document.getElementById('startChat');
+        const statusText = document.getElementById('status');
+
+        async function initializeWebSocket() {
+            if (isConnecting) return;
+            isConnecting = true;
+
+            try {
+                sessionId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+                ws = new WebSocket(`ws://localhost:8765/ws/${sessionId}`);
+                
+                ws.onopen = () => {
+                    isConnecting = false;
+                    statusText.textContent = 'Connected! Click again to start speaking';
+                    startButton.textContent = 'Start Speaking';
+                };
+
+                ws.onmessage = async (event) => {
+                    const response = event.data;
+                    statusText.textContent = response;
+                    const utterance = new SpeechSynthesisUtterance(response);
+                    window.speechSynthesis.speak(utterance);
+                };
+
+                ws.onclose = () => {
+                    isConnecting = false;
+                    statusText.textContent = 'Connection closed. Click to reconnect';
+                    startButton.textContent = 'Start Voice Chat';
+                    ws = null;
+                    stopRecording();
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    isConnecting = false;
+                    statusText.textContent = 'Connection error. Please try again';
+                    ws = null;
+                    stopRecording();
+                };
+            } catch (error) {
+                console.error('Error initializing WebSocket:', error);
+                isConnecting = false;
+                statusText.textContent = 'Failed to connect. Please try again';
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                statusText.classList.remove('recording');
+            }
+        }
+
+        startButton.addEventListener('click', async () => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                await initializeWebSocket();
+            } else if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+
+                    mediaRecorder.ondataavailable = (event) => {
+                        audioChunks.push(event.data);
+                    };
+
+                    mediaRecorder.onstop = async () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            const arrayBuffer = await audioBlob.arrayBuffer();
+                            ws.send(arrayBuffer);
+                            statusText.textContent = 'Processing...';
+                        }
+                    };
+
+                    mediaRecorder.start();
+                    startButton.textContent = 'Stop Speaking';
+                    statusText.textContent = 'Recording...';
+                    statusText.classList.add('recording');
+                } catch (err) {
+                    console.error('Error accessing microphone:', err);
+                    statusText.textContent = 'Error accessing microphone';
+                }
+            } else {
+                stopRecording();
+                startButton.textContent = 'Start Speaking';
+                statusText.textContent = 'Processing...';
+            }
+        });
+
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            if (ws) ws.close();
+            stopRecording();
+        });
+    </script>
+</body>
+</html>
