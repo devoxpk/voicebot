@@ -1,160 +1,200 @@
-"""
-Author: Devs Do Code (Sree)
-Project: Realtime Speech to Text Listener
-Description: A Python script that uses Selenium to interact with a website and listen to user input & print them in real time.
-"""
-
+from a4f_local import A4F
 from typing import Optional
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.service import Service
-# import os
+import asyncio
+import websockets
+import json
+import base64
+import io
+import wave
+import os
+from faster import transcribe_audio_faster_whisper
 
 class SpeechToTextListener:
-    """A class for performing speech-to-text using a web-based service."""
-
-    def __init__(
-            self, 
-            # website_path: str = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), r"ENGINE\STT\src\index.html"),
-            website_path: str = "https://realtime-stt-devs-do-code.netlify.app/", 
-            language: str = "hi-IN",
-            wait_time: int = 10):
-        
-        """Initializes the STT class with the given website path and language."""
-        self.website_path = website_path
+    def __init__(self, language: str = "en-US", ai_assistant=None):
         self.language = language
-        self.chrome_options = Options()
-        self.chrome_options.add_argument("--use-fake-ui-for-media-stream")
-        self.chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3")
-        # self.chrome_options.add_argument("--headless=new") # Commented out to make browser visible
-        # Use ChromeDriverManager to automatically handle driver compatibility
-        service = Service(ChromeDriverManager().install())
-        self.driver = None
-        self.service = service
-        self._initialize_driver()
-        self.wait = WebDriverWait(self.driver, wait_time)
-        print("Made By Abuzar")
-        print("Driver initialized.")
+        self.ai_assistant = ai_assistant
+        self.active_connections = set()
+        self.tts_client = A4F()
+        self.is_processing = False
+        self.audio_buffer = bytearray()
 
-    def _initialize_driver(self):
-        if self.driver is None or not self.driver.service.is_connectable():
-            print("Driver not connected or not initialized. Attempting to re-initialize driver.")
-            if self.driver:
-                try:
-                    self.driver.quit()
-                    print("Existing driver quit successfully.")
-                except Exception as e:
-                    print(f"Error quitting existing driver: {e}")
-            self.driver = webdriver.Chrome(service=self.service, options=self.chrome_options)
-            print("Driver re-initialized.")
-
-    def stream(self, content: str):
-        """Prints the given content to the console with a yellow color, overwriting previous output, with "speaking..." added."""
-        print("\033[96m\rUser Speaking: \033[93m" + f" {content}", end='', flush=True)
-
-    def get_text(self) -> str:
-        """Retrieves the transcribed text from the website."""
-        return self.driver.find_element(By.ID, "convert_text").text
-
-    def select_language(self):
-        """Selects the language from the dropdown using JavaScript."""
-        self.driver.execute_script(
-            f"""
-            var select = document.getElementById('language_select');
-            select.value = '{self.language}';
-            var event = new Event('change');
-            select.dispatchEvent(event);
-            """
-        )
-
-    def verify_language_selection(self):
-        """Verifies if the language is correctly selected."""
-        language_select = self.driver.find_element(By.ID, "language_select")
-        selected_language = language_select.find_element(By.CSS_SELECTOR, "option:checked").get_attribute("value")
-        return selected_language == self.language
-
-    def main(self, retry_count: int = 0) -> Optional[str]:
-        """Performs speech-to-text conversion and returns the transcribed text."""
-        print(f"Entering main method (retry_count: {retry_count})")
-        if retry_count >= 3:
-            print("Failed to initialize recording after multiple attempts")
-            return None
-            
-
+    def save_audio_as_mp3(self, audio_data: bytes, filename: str = "received.mp3") -> str:
+        """Save audio data as MP3 file."""
         try:
-            # Check if we're already on the correct page
-            current_url = self.driver.current_url
-            if not current_url or not current_url.startswith(self.website_path):
-                print("Reloading page due to URL mismatch or error.")
-                print(f"Loading page: {self.website_path}")
-            self.driver.get(self.website_path)
+            filepath = os.path.join(os.getcwd(), filename)
+            with open(filepath, 'wb') as mp3_file:
+                mp3_file.write(audio_data)
+            print(f"Audio saved as {filepath}, size: {len(audio_data)} bytes")
+            return filepath
         except Exception as e:
-            print(f"Error checking current URL: {e}. Reloading page.")
-            print(f"Loading page: {self.website_path}")
-            self.driver.get(self.website_path)
-        
+            print(f"Error saving audio file: {e}")
+            return ""
+
+    async def process_audio_to_text(self, audio_data: bytes) -> str:
+        """Convert raw PCM audio data to text using faster-whisper."""
         try:
-            # Wait for and verify recording button state
-            record_button = self.wait.until(EC.presence_of_element_located((By.ID, "click_to_record")))
-            is_recording = self.driver.find_element(By.ID, "is_recording")
+            print(f"Processing audio data of size: {len(audio_data)} bytes")
             
-            # If not already recording, set up and start recording
-            if not is_recording.text.startswith("Recording: True"):
-                # Ensure the dropdown options are fully loaded before selecting
-                self.wait.until(EC.presence_of_element_located((By.ID, "language_select")))
+            # Save audio as MP3 file
+            audio_file = self.save_audio_as_mp3(audio_data, "received.mp3")
+            if not audio_file:
+                return ""
+            
+            # Use faster-whisper for transcription
+            text = transcribe_audio_faster_whisper(audio_file)
+            print(f"Transcribed text: {text}")
+            
+            # Clean up the temporary file
+            try:
+                os.remove(audio_file)
+            except:
+                pass
                 
-                # Select the language using JavaScript
-                print(f"Attempting to select language: {self.language}")
-                self.select_language()
-
-                # Verify the language selection
-                if not self.verify_language_selection():
-                    print(f"Error: Failed to select the correct language. Selected: {self.verify_language_selection():}, Expected: {self.language}")
-                    return None
-                print("Language selected successfully.")
-
-                print("Clicking record button.")
-                record_button.click()
-                print("Record button clicked.")
+            return text
         except Exception as e:
-            print(f"Error setting up recording: {e}. Reloading page and retrying.")
-            # If there's any error in setup, reload the page and try again
-            print("Reloading page due to URL mismatch or error.")
-            self.driver.get(self.website_path)
-            return self.main(retry_count + 1)
+            print(f"Error in audio transcription: {e}")
+            return ""
 
-        is_recording = self.wait.until(
-            EC.presence_of_element_located((By.ID, "is_recording"))
-        )
+    async def text_to_speech(self, text: str, websocket) -> None:
+        """Convert text to speech using A4F and send to websocket."""
+        try:
+            audio_bytes = self.tts_client.audio.speech.create(
+                model="tts-1-hd",
+                input=text,
+                voice="onyx"
+            )
+            # if websocket.open:
+            await websocket.send(audio_bytes)
+            print(f"Sent audio response for text: {text}")
+            
+            # Send a message to indicate processing is complete
+            status_msg = {"type": "status", "message": "Ready for next input"}
+            await websocket.send(json.dumps(status_msg))
+        except Exception as e:
+            print(f"Error in text-to-speech conversion: {e}")
+            error_msg = {"type": "error", "message": "Failed to generate speech"}
+            if websocket.open:
+                await websocket.send(json.dumps(error_msg))
 
-        print("\033[94m\rListening...", end='', flush=True)
-        while is_recording.text.startswith("Recording: True"):
-            text = self.get_text()
-            if text:
-                self.stream(text)
-            is_recording = self.driver.find_element(By.ID, "is_recording")
+    async def handle_websocket_connection(self, websocket):
+        print(f"New WebSocket connection established. Total connections: {len(self.active_connections) + 1}")
+        try:
+            self.active_connections.add(websocket)
+            self.audio_buffer = bytearray()  # Reset buffer for new connection
+            
+            async for message in websocket:
+                try:
+                    data = json.loads(message)
+                    message_type = data.get('type')
+                    print(f"Received message type: {message_type}")
 
-        return self.get_text()
+                    if message_type == 'audio_data' and not self.is_processing:
+                        try:
+                            self.is_processing = True
+                            # Send status to client
+                            status_msg = {"type": "status", "message": "Processing audio..."}
+                            # if websocket.open:
+                            await websocket.send(json.dumps(status_msg))
+                                
+                            # Decode base64 audio data
+                            audio_base64 = data.get('audio_data')
+                            if not audio_base64:
+                                print("Error: No audio data in message")
+                                error_msg = {"type": "error", "message": "No audio data received"}
+                                # if websocket.open:
+                                await websocket.send(json.dumps(error_msg))
+                                self.is_processing = False
+                                continue
 
-    def listen(self, prints: bool = False) -> Optional[str]:
-        """Starts the listening process by navigating to the website, selecting the desired language, and
-            initiating speech-to-text conversion. The function returns the transcribed text if the
-            listening process completes successfully.
-        """
-        print("Entering listen method.")
-        while True:
-            result = self.main()
-            if result and len(result) != 0:
-                print("\r" + " " * (len(result) + 16) + "\r", end="", flush=True)
-                if prints: print("\033[92m\rYOU SAID: " + f"{result}\033[0m\n")
-                break
-        return result
+                            # Extract and decode the PCM audio data
+                            try:
+                                if ',' in audio_base64:
+                                    audio_data = base64.b64decode(audio_base64.split(',')[1])
+                                else:
+                                    audio_data = base64.b64decode(audio_base64)
+                                    
+                                print(f"Received complete audio buffer of size: {len(audio_data)} bytes")
+
+                                # Process the complete audio buffer
+                                if len(audio_data) > 0:
+                                    text = await self.process_audio_to_text(audio_data)
+                                    if text and text.strip():
+                                        print(f"Transcribed text: '{text}'")
+                                        # Get AI response
+                                        if self.ai_assistant:
+                                            try:
+                                                response = self.ai_assistant.interact_with_llm(text)
+                                                print(f"AI response: {response}")
+                                                # Convert response to speech
+                                                await self.text_to_speech(response, websocket)
+                                            except Exception as e:
+                                                print(f"Error getting AI response: {e}")
+                                                error_msg = {"type": "error", "message": "Failed to get AI response"}
+                                                # if websocket.open:
+                                                await websocket.send(json.dumps(error_msg))
+                                        else:
+                                            # No AI assistant, just echo the transcription
+                                            status_msg = {"type": "status", "message": f"Transcribed: {text}"}
+                                            # if websocket.open:
+                                            await websocket.send(json.dumps(status_msg))
+                                    else:
+                                        print("No text was transcribed or text was empty")
+                                        status_msg = {"type": "status", "message": "No speech detected. Please try again."}
+                                        # if websocket.open:
+                                        await websocket.send(json.dumps(status_msg))
+                                else:
+                                    print("Received empty audio data")
+                                    error_msg = {"type": "error", "message": "Empty audio data received"}
+                                    # if websocket.open:
+                                    await websocket.send(json.dumps(error_msg))
+                                        
+                            except Exception as e:
+                                print(f"Error decoding/processing audio data: {e}")
+                                error_msg = {"type": "error", "message": f"Audio processing failed: {str(e)}"}
+                                # if websocket.open:
+                                await websocket.send(json.dumps(error_msg))
+                            finally:
+                                self.is_processing = False
+                                
+                        except Exception as e:
+                            print(f"Error in audio_data handler: {e}")
+                            error_msg = {"type": "error", "message": "Internal processing error"}
+                            # if websocket.open:
+                            await websocket.send(json.dumps(error_msg))
+                            self.is_processing = False
+                            
+                except json.JSONDecodeError as e:
+                    print(f"Error decoding JSON message: {e}")
+                    error_msg = {"type": "error", "message": "Invalid message format"}
+                    # if websocket.open:
+                    await websocket.send(json.dumps(error_msg))
+                except Exception as e:
+                    print(f"Error handling message: {e}")
+                    error_msg = {"type": "error", "message": "Message handling failed"}
+                    # if websocket.open:
+                    await websocket.send(json.dumps(error_msg))
+
+        except Exception as e:
+            print(f"WebSocket connection error: {e}")
+        finally:
+            if websocket in self.active_connections:
+                self.active_connections.remove(websocket)
+            print(f"WebSocket connection closed. Active connections: {len(self.active_connections)}")
+
+    async def start_websocket_server(self, host="localhost", port=8765):
+        """Start the WebSocket server."""
+        server = await websockets.serve(self.handle_websocket_connection, host, port)
+        print(f"WebSocket server started on ws://{host}:{port}")
+        return server
 
 if __name__ == "__main__":
-    listener = SpeechToTextListener(language="en-IN")  # You can specify the desired language here
-    speech = listener.listen()
-    print("FINAL EXTRACTION: ", speech)
+    from rag.AIVoiceAssistant import AIVoiceAssistant
+
+    ai_assistant = AIVoiceAssistant()
+    listener = SpeechToTextListener(language="en-IN", ai_assistant=ai_assistant)
+
+    async def main():
+        server = await listener.start_websocket_server()
+        await server.wait_closed()
+
+    asyncio.run(main())

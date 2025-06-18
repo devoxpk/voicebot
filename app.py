@@ -1,66 +1,68 @@
 import os
-import json
-import time
-from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
+import asyncio
 from rag.AIVoiceAssistant import AIVoiceAssistant
-
 from STT.DevsDoCode import SpeechToTextListener
-from voice_service import play_text_to_speech, stop_audio_processor, init_audio
+from voice_service import init_audio, stop_audio_processor
+import multiprocessing
+
+multiprocessing.set_start_method('spawn', force=True)
 
 print("\nInitializing AI Voice Assistant System...")
-ai_assistant = AIVoiceAssistant()
-# Load restaurant context
-context = ai_assistant.load_context()
+
+# Initialize audio system
+if not init_audio():
+    print("Failed to initialize audio system")
+    exit(1)
+
+# Initialize AI assistant
+# ai_assistant = AIVoiceAssistant()
+# context = ai_assistant.load_context()
+
+# Import voice service class
+class VoiceService:
+    def __init__(self):
+        from voice_service import play_text_to_speech
+        self.play_text_to_speech = play_text_to_speech
+    
+    async def text_to_speech(self, text, websocket=None):
+        """Convert text to speech and send to websocket if provided."""
+        if websocket:
+            await self.play_text_to_speech(text, websocket)
+        else:
+            print(f"No websocket provided for TTS: {text}")
+
+voice_service = VoiceService()
+
+# Initialize speech-to-text listener with WebSocket integration
+# print("Initializing SpeechToTextListener with WebSocket integration")
+# stt_listener = SpeechToTextListener(
+#     language="en-IN",
+#     ai_assistant=ai_assistant,
+# )
+
 print("System initialization completed.\n")
 
-def main():
-    print("Entering main function.")
-    try:
-        # Initialize audio system
-        if not init_audio():
-            print("Failed to initialize audio system")
-            return
+async def main():
+    # Initialize AI assistant inside main
+    ai_assistant = AIVoiceAssistant()
+    context = ai_assistant.load_context()
 
-        # Initialize speech-to-text listener
-        print("Initializing SpeechToTextListener in app.py")
-        stt_listener = SpeechToTextListener(language="en-IN")
-        
-        print("\nAI Assistant is ready! Listening for your voice...")
-        print("Entering main loop.")
-        while True:
-            try:
-                # Listen for user speech
-                user_input = stt_listener.listen(prints=True)
-                
-                if user_input:
-                    print(f"User input detected: {user_input}")
-                    if user_input.lower() != 'exit':
-                        # Get response from AI assistant
-                        response = ai_assistant.interact_with_llm(user_input)
-                        if response:
-                            print(f"AI Assistant Response: {response}")
-                            # Convert response to speech
-                            play_text_to_speech(response, language='en', emotion='happy')
-                            
-                    elif user_input.lower() == 'exit':
-                        print("Exit command received. Stopping AI Assistant.")
-                        break
-            except (StaleElementReferenceException, WebDriverException) as e:
-                print(f"\nSpeech service error: {e}. Attempting to continue...")
-                time.sleep(1) # Small delay before retrying
-            except Exception as e:
-                print(f"\nAn unexpected error occurred: {e}. Attempting to continue...")
-                time.sleep(1) # Small delay before retrying
-                
-    except KeyboardInterrupt:
-        print("\nKeyboardInterrupt received. Stopping AI Assistant...")
+    # Initialize speech-to-text listener inside main
+    print("Initializing SpeechToTextListener with WebSocket integration")
+    stt_listener = SpeechToTextListener(
+        language="en-IN",
+        ai_assistant=ai_assistant,
+    )
+    try:
+        server = await stt_listener.start_websocket_server()
+        await server.wait_closed()
     finally:
-        print("Cleaning up resources.")
-        # Clean up resources
+        print("\nCleaning up resources...")
         stop_audio_processor()
-        if 'stt_listener' in locals():
-            print("Quitting STT listener driver.")
+        if hasattr(stt_listener, 'driver') and stt_listener.driver:
+            print("Quitting STT listener driver")
             stt_listener.driver.quit()
 
 if __name__ == "__main__":
-    main()
+    multiprocessing.freeze_support()
+    asyncio.run(main())

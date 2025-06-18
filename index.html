@@ -53,6 +53,24 @@
             50% { opacity: 0.5; }
             100% { opacity: 1; }
         }
+        .conversation {
+            margin-top: 20px;
+            max-height: 200px;
+            overflow-y: auto;
+            width: 100%;
+            text-align: left;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 10px;
+        }
+        .user-message {
+            color: #2196F3;
+            margin-bottom: 5px;
+        }
+        .assistant-message {
+            color: #4CAF50;
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
@@ -60,36 +78,125 @@
         <h1>AI Voice Assistant</h1>
         <button id="startChat" class="chat-button">Start Voice Chat</button>
         <p id="status" class="status">Click to start chatting</p>
+        <div id="conversation" class="conversation" style="display: none;"></div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.0/lame.min.js"></script>
     <script>
         let ws = null;
         let mediaRecorder = null;
         let audioChunks = [];
         let sessionId = null;
         let isConnecting = false;
+        let isRecording = false;
+        let audioContext = null;
+        let mediaStream = null;
+        let isProcessing = false;
+        let processor = null;
+        let source = null;
         const startButton = document.getElementById('startChat');
         const statusText = document.getElementById('status');
+        const conversationDiv = document.getElementById('conversation');
+        
+        console.log('Initializing voice chat interface...');
 
         async function initializeWebSocket() {
-            if (isConnecting) return;
+            console.log('Attempting to initialize WebSocket connection...');
+            if (isConnecting) {
+                console.log('Connection already in progress, returning.');
+                return;
+            }
             isConnecting = true;
 
             try {
                 sessionId = Date.now().toString(36) + Math.random().toString(36).substr(2);
-                ws = new WebSocket(`ws://localhost:8765/ws/${sessionId}`);
+                console.log('Generated session ID:', sessionId);
+                ws = new WebSocket('ws://localhost:8765');
+                console.log('WebSocket object created.');
                 
                 ws.onopen = () => {
                     isConnecting = false;
-                    statusText.textContent = 'Connected! Click again to start speaking';
+                    statusText.textContent = 'Connected! Press the button to start/stop speaking';
                     startButton.textContent = 'Start Speaking';
+                    conversationDiv.style.display = 'block';
+                    console.log('WebSocket connection opened successfully.');
                 };
 
                 ws.onmessage = async (event) => {
-                    const response = event.data;
-                    statusText.textContent = response;
-                    const utterance = new SpeechSynthesisUtterance(response);
-                    window.speechSynthesis.speak(utterance);
+                    console.log('Received message from WebSocket.');
+                    if (typeof event.data === 'string') {
+                        try {
+                            // Try to parse as JSON first
+                            const jsonData = JSON.parse(event.data);
+                            if (jsonData.type === 'status') {
+                                statusText.textContent = jsonData.message;
+                                if (jsonData.message === 'Ready for next input') {
+                                    isProcessing = false;
+                                    startButton.textContent = 'Start Speaking';
+                                    startButton.disabled = false;
+                                }
+                                if (jsonData.message === 'Processing audio...') {
+                                    isProcessing = true;
+                                    startButton.disabled = true;
+                                }
+                            } else if (jsonData.type === 'error') {
+                                statusText.textContent = jsonData.message;
+                                isProcessing = false;
+                                startButton.disabled = false;
+                            }
+                        } catch (e) {
+                            // Not JSON, treat as plain text
+                            statusText.textContent = event.data;
+                            console.log('Received text message:', event.data);
+                        }
+                    } else {
+                        // Handle audio data
+                        try {
+                            console.log('Received audio data from backend');
+                            const audioBlob = new Blob([event.data], { type: 'audio/mp3' });
+                            const audioUrl = URL.createObjectURL(audioBlob);
+                            const audio = new Audio(audioUrl);
+                            
+                            // Add assistant message to conversation
+                            const assistantMessage = document.createElement('p');
+                            assistantMessage.className = 'assistant-message';
+                            assistantMessage.textContent = 'Assistant: [Voice Response]';
+                            conversationDiv.appendChild(assistantMessage);
+                            conversationDiv.scrollTop = conversationDiv.scrollHeight;
+                            
+                            audio.onplay = () => {
+                                console.log('Started playing audio response');
+                                statusText.textContent = 'Playing response...';
+                            };
+                            
+                            audio.onended = () => {
+                                console.log('Finished playing audio response');
+                                URL.revokeObjectURL(audioUrl);
+                                statusText.textContent = 'Ready for next input';
+                                isProcessing = false;
+                                startButton.disabled = false;
+                            };
+                            
+                            audio.onerror = (error) => {
+                                console.error('Error playing audio:', error);
+                                statusText.textContent = 'Error playing audio response';
+                                isProcessing = false;
+                                startButton.disabled = false;
+                            };
+                            
+                            audio.play().catch(e => {
+                                console.error('Audio play promise rejected:', e);
+                                statusText.textContent = 'Error playing audio response (promise rejected)';
+                                isProcessing = false;
+                                startButton.disabled = false;
+                            });
+                        } catch (error) {
+                            console.error('Error processing audio data:', error);
+                            statusText.textContent = 'Error playing audio response';
+                            isProcessing = false;
+                            startButton.disabled = false;
+                        }
+                    }
                 };
 
                 ws.onclose = () => {
@@ -98,6 +205,17 @@
                     startButton.textContent = 'Start Voice Chat';
                     ws = null;
                     stopRecording();
+                    isProcessing = false;
+                    startButton.disabled = false;
+                    if (mediaStream) {
+                        mediaStream.getTracks().forEach(track => track.stop());
+                        mediaStream = null;
+                    }
+                    if (audioContext) {
+                        audioContext.close();
+                        audioContext = null;
+                    }
+                    console.log('WebSocket connection closed.');
                 };
 
                 ws.onerror = (error) => {
@@ -106,63 +224,216 @@
                     statusText.textContent = 'Connection error. Please try again';
                     ws = null;
                     stopRecording();
+                    isProcessing = false;
+                    startButton.disabled = false;
+                    if (mediaStream) {
+                        mediaStream.getTracks().forEach(track => track.stop());
+                        mediaStream = null;
+                    }
+                    if (audioContext) {
+                        audioContext.close();
+                        audioContext = null;
+                    }
+                    console.log('WebSocket error occurred.');
                 };
             } catch (error) {
                 console.error('Error initializing WebSocket:', error);
                 isConnecting = false;
                 statusText.textContent = 'Failed to connect. Please try again';
+                isProcessing = false;
+                startButton.disabled = false;
             }
         }
-
+    
         function stopRecording() {
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                mediaRecorder.stop();
-                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            if (isRecording) {
+                isRecording = false;
                 statusText.classList.remove('recording');
+                statusText.textContent = 'Processing...';
+                startButton.textContent = 'Processing...';
+                startButton.disabled = true;
+                isProcessing = true;
+
+                try {
+                    // Disconnect audio processing nodes
+                    if (processor) {
+                        processor.disconnect();
+                        processor = null;
+                    }
+                    if (source) {
+                        source.disconnect();
+                        source = null;
+                    }
+
+                    // Combine all Float32Array chunks into a single Float32Array
+                    if (audioChunks.length > 0) {
+                        const combinedFloat32 = new Float32Array(audioChunks.reduce((acc, chunk) => acc + chunk.length, 0));
+                        let offset = 0;
+                        for (const chunk of audioChunks) {
+                            combinedFloat32.set(chunk, offset);
+                            offset += chunk.length;
+                        }
+
+                        // Convert Float32Array to Int16Array for LAME (16-bit PCM)
+                        const pcm16 = new Int16Array(combinedFloat32.length);
+                        for (let i = 0; i < combinedFloat32.length; i++) {
+                            pcm16[i] = Math.max(-1, Math.min(1, combinedFloat32[i])) * 0x7FFF;
+                        }
+
+                        // Initialize LAME encoder
+                        const sampleRate = audioContext.sampleRate; // Use the actual sample rate from AudioContext
+                        const mp3encoder = new lamejs.Mp3Encoder(1, sampleRate, 128); // mono, 16kHz, 128kbps
+                        const mp3Data = [];
+
+                        const MAX_SAMPLES = 1152; // LAME's internal buffer size
+                        for (let i = 0; i < pcm16.length; i += MAX_SAMPLES) {
+                            const samples = pcm16.subarray(i, i + MAX_SAMPLES);
+                            const mp3buf = mp3encoder.encodeBuffer(samples);
+                            if (mp3buf.length > 0) {
+                                mp3Data.push(mp3buf);
+                            }
+                        }
+                        const mp3buf = mp3encoder.flush(); // Flush remaining data
+                        if (mp3buf.length > 0) {
+                            mp3Data.push(mp3buf);
+                        }
+
+                        const combinedMp3 = new Uint8Array(mp3Data.reduce((acc, buf) => acc + buf.length, 0));
+                        offset = 0;
+                        for (const buf of mp3Data) {
+                            combinedMp3.set(buf, offset);
+                            offset += buf.length;
+                        }
+
+                        // Convert Uint8Array to binary string for base64 encoding
+                        let binaryString = '';
+                        for (let i = 0; i < combinedMp3.length; i++) {
+                            binaryString += String.fromCharCode(combinedMp3[i]);
+                        }
+                        
+                        // Convert to base64
+                        const base64Data = btoa(binaryString);
+                        
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            const audioData = {
+                                type: 'audio_data',
+                                audio_data: 'data:audio/mp3;base64,' + base64Data
+                            };
+                            try {
+                                ws.send(JSON.stringify(audioData));
+                                console.log('Sent MP3 audio data, size:', combinedMp3.length, 'bytes');
+                                
+                                // Add user message to conversation
+                                const userMessage = document.createElement('p');
+                                userMessage.className = 'user-message';
+                                userMessage.textContent = 'You: [Voice Input]';
+                                conversationDiv.appendChild(userMessage);
+                                conversationDiv.scrollTop = conversationDiv.scrollHeight;
+                            } catch (sendError) {
+                                console.error('Error sending WebSocket message:', sendError);
+                                statusText.textContent = 'Error sending audio data. Please try again.';
+                            }
+                        } else {
+                            console.error('WebSocket is not open');
+                            statusText.textContent = 'Connection lost. Please reconnect.';
+                        }
+                    } else {
+                        console.log('No audio data recorded');
+                        statusText.textContent = 'No audio recorded. Try again.';
+                    }
+                } catch (error) {
+                    console.error('Error processing audio:', error);
+                    statusText.textContent = 'Error processing audio: ' + error.message;
+                } finally {
+                    isProcessing = false;
+                    startButton.disabled = false;
+                }
+                
+                // Clean up
+                audioChunks = [];
             }
         }
 
-        startButton.addEventListener('click', async () => {
-            if (!ws || ws.readyState !== WebSocket.OPEN) {
-                await initializeWebSocket();
-            } else if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+        async function startRecording() {
+            if (!mediaStream) {
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    mediaRecorder = new MediaRecorder(stream);
-                    audioChunks = [];
-
-                    mediaRecorder.ondataavailable = (event) => {
-                        audioChunks.push(event.data);
-                    };
-
-                    mediaRecorder.onstop = async () => {
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            const arrayBuffer = await audioBlob.arrayBuffer();
-                            ws.send(arrayBuffer);
-                            statusText.textContent = 'Processing...';
+                    mediaStream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            channelCount: 1,
+                            sampleRate: 16000,
+                            sampleSize: 16
                         }
-                    };
-
-                    mediaRecorder.start();
-                    startButton.textContent = 'Stop Speaking';
-                    statusText.textContent = 'Recording...';
-                    statusText.classList.add('recording');
+                    });
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                    console.log('Audio stream and context initialized');
                 } catch (err) {
                     console.error('Error accessing microphone:', err);
-                    statusText.textContent = 'Error accessing microphone';
+                    statusText.textContent = 'Error accessing microphone: ' + err.message;
+                    return;
                 }
-            } else {
+            }
+
+            if (!isRecording && audioContext && mediaStream) {
+                audioChunks = [];
+                
+                try {
+                    source = audioContext.createMediaStreamSource(mediaStream);
+                    processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                    processor.onaudioprocess = (e) => {
+                        if (!isRecording) return;
+                        
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        audioChunks.push(inputData.slice()); // Store Float32Array directly
+                    };
+
+                    source.connect(processor);
+                    processor.connect(audioContext.destination);
+                    
+                    isRecording = true;
+                    statusText.textContent = 'Recording...';
+                    statusText.classList.add('recording');
+                    startButton.textContent = 'Stop Speaking';
+                    console.log('Started recording PCM audio');
+                } catch (err) {
+                    console.error('Error setting up audio processing:', err);
+                    statusText.textContent = 'Error setting up recording: ' + err.message;
+                    // Ensure isProcessing is reset on error during recording setup
+                    isProcessing = false;
+                    startButton.disabled = false;
+                }
+            }
+        }
+    
+        startButton.addEventListener('click', async (event) => {
+            event.preventDefault(); // Prevent default form submission behavior
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                console.log('Initializing WebSocket connection...');
+                await initializeWebSocket();
+            } else if (isProcessing) {
+                // Do nothing if we're processing
+                return;
+            } else if (isRecording) {
+                // Stop recording if already recording
                 stopRecording();
-                startButton.textContent = 'Start Speaking';
-                statusText.textContent = 'Processing...';
+            } else {
+                // Start recording
+                await startRecording();
             }
         });
-
+        
         // Clean up on page unload
         window.addEventListener('beforeunload', () => {
             if (ws) ws.close();
             stopRecording();
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
         });
     </script>
 </body>

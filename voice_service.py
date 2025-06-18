@@ -123,31 +123,58 @@ def start_audio_processor():
         _audio_thread.start()
         print("Audio processor thread started.")
 
-def play_text_to_speech(text, language='en', emotion='happy'):
-    print(f"Playing text to speech: {text[:50]}...")
+async def play_text_to_speech(text, websocket, language='en', emotion='happy'):
+    print(f"Generating speech for text: {text[:50]}...")
     if not init_audio():
+        error_msg = "Failed to initialize audio system"
+        print(error_msg)
+        if websocket and websocket.open:
+            await websocket.send(error_msg)
         return
-        
-    # Start audio processor if not running
-    start_audio_processor()
-    
-    # Configure speech parameters
-    tts_speed = True  # Default to normal speed
-    if emotion == 'happy' or emotion == 'angry':
-        tts_speed = False  # Faster speech
     
     try:
+        # Configure speech parameters
+        tts_speed = True  # Default to normal speed
+        if emotion == 'happy' or emotion == 'angry':
+            tts_speed = False  # Faster speech
+        
+        print(f"Generating speech with parameters: language={language}, speed={tts_speed}")
         # Create gTTS instance and generate speech
         tts = gTTS(text=text, lang=language, slow=tts_speed)
         
         # Save speech to BytesIO buffer
         fp = io.BytesIO()
+        print("Converting text to speech...")
         tts.write_to_fp(fp)
-        fp.seek(0)
         
-        # Add to audio queue for async processing
-        audio_queue.put(fp)
+        # Get the audio data as bytes
+        fp.seek(0)
+        audio_data = fp.read()
+        print(f"Generated audio data size: {len(audio_data)} bytes")
+        
+        # Send audio data to frontend if WebSocket is still open
+        if websocket and websocket.open:
+            print("Sending audio data to frontend...")
+            try:
+                await websocket.send(audio_data)
+                print("Audio data sent successfully")
+            except Exception as e:
+                print(f"Error sending audio data through WebSocket: {e}")
+                raise
+        else:
+            print("WebSocket connection is not available or closed")
+            return
+        
+        # Clean up
+        fp.close()
+        print("Audio generation and transmission completed")
         
     except Exception as e:
-        print(f"Error generating audio: {e}")
+        error_msg = f"Error generating audio: {e}"
+        print(error_msg)
+        if websocket and websocket.open:
+            try:
+                await websocket.send(error_msg)
+            except Exception as ws_error:
+                print(f"Error sending error message through WebSocket: {ws_error}")
         init_audio()  # Try to reinitialize audio if error occurs
