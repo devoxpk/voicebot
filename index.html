@@ -322,13 +322,13 @@
                             try {
                                 ws.send(JSON.stringify(audioData));
                                 console.log('Sent MP3 audio data, size:', combinedMp3.length, 'bytes');
-                                
+                                startRecording();
                                 // Add user message to conversation
-                                const userMessage = document.createElement('p');
-                                userMessage.className = 'user-message';
-                                userMessage.textContent = 'You: [Voice Input]';
-                                conversationDiv.appendChild(userMessage);
-                                conversationDiv.scrollTop = conversationDiv.scrollHeight;
+                                // const userMessage = document.createElement('p');
+                                // userMessage.className = 'user-message';
+                                // userMessage.textContent = 'You: [Voice Input]';
+                                // conversationDiv.appendChild(userMessage);
+                                // conversationDiv.scrollTop = conversationDiv.scrollHeight;
                             } catch (sendError) {
                                 console.error('Error sending WebSocket message:', sendError);
                                 statusText.textContent = 'Error sending audio data. Please try again.';
