@@ -21,62 +21,93 @@ class SpeechToTextListener:
     def save_audio_as_mp3(self, audio_data: bytes, filename: str = "received.mp3") -> str:
         """Save audio data as MP3 file."""
         try:
+            print(f"save_audio_as_mp3: Attempting to save audio to {filename}.")
             filepath = os.path.join(os.getcwd(), filename)
             with open(filepath, 'wb') as mp3_file:
                 mp3_file.write(audio_data)
-            print(f"Audio saved as {filepath}, size: {len(audio_data)} bytes")
+            print(f"save_audio_as_mp3: Audio saved as {filepath}, size: {len(audio_data)} bytes")
             return filepath
         except Exception as e:
-            print(f"Error saving audio file: {e}")
+            print(f"save_audio_as_mp3: Error saving audio file: {e}")
             return ""
 
     async def process_audio_to_text(self, audio_data: bytes) -> str:
         """Convert raw PCM audio data to text using faster-whisper."""
         try:
-            print(f"Processing audio data of size: {len(audio_data)} bytes")
+            print("process_audio_to_text: Starting audio to text processing.")
+            print(f"process_audio_to_text: Processing audio data of size: {len(audio_data)} bytes")
             
             # Save audio as MP3 file
+            print("process_audio_to_text: Saving audio as MP3.")
             audio_file = self.save_audio_as_mp3(audio_data, "received.mp3")
             if not audio_file:
+                print("process_audio_to_text: Failed to save audio as MP3.")
                 return ""
             
             # Use faster-whisper for transcription
+            print("process_audio_to_text: Transcribing audio with faster-whisper.")
             text = transcribe_audio_faster_whisper(audio_file)
-            print(f"Transcribed text: {text}")
+            print(f"process_audio_to_text: Transcribed text: {text}")
             
             # Clean up the temporary file
             try:
                 os.remove(audio_file)
-            except:
-                pass
+                print(f"process_audio_to_text: Cleaned up temporary file: {audio_file}")
+            except Exception as e:
+                print(f"process_audio_to_text: Error cleaning up temporary file: {e}")
                 
+            print("process_audio_to_text: Audio to text processing completed.")
             return text
         except Exception as e:
-            print(f"Error in audio transcription: {e}")
+            print(f"process_audio_to_text: Error in audio transcription: {e}")
             return ""
 
     async def text_to_speech(self, text: str, websocket) -> None:
         """Convert text to speech using A4F and send to websocket."""
         try:
+            print("text_to_speech: Starting text-to-speech process.")
+            print(f"text_to_speech: Type of websocket: {type(websocket)}")
+            # First send a status message to inform the client that TTS is in progress
+            status_msg = {"type": "status", "message": "Generating speech..."}
+            await websocket.send(json.dumps(status_msg))
+            print("text_to_speech: Sent 'Generating speech...' status.")
+            
+            print(f"text_to_speech: Generating audio for text: '{text[:50]}...'")
+            # Generate the audio
             audio_bytes = self.tts_client.audio.speech.create(
                 model="tts-1-hd",
                 input=text,
                 voice="onyx"
             )
-            # if websocket.open:
-            await websocket.send(audio_bytes)
-            print(f"Sent audio response for text: {text}")
+            print(f"text_to_speech: Audio generated, size: {len(audio_bytes)} bytes.")
             
-            # Send a message to indicate processing is complete
-            status_msg = {"type": "status", "message": "Ready for next input"}
-            await websocket.send(json.dumps(status_msg))
+            # Send the binary audio data
+            print(f"text_to_speech: Attributes of websocket: {dir(websocket)}")
+            try:
+                if not websocket.closed:
+                    await websocket.send(audio_bytes)
+                    print(f"Sent audio response for text: {text}")
+                    
+                    # Wait a moment before sending the ready status
+                    await asyncio.sleep(0.5)
+                    print("text_to_speech: Waited 0.5 seconds.")
+                    
+                    # Send a message to indicate processing is complete
+                    status_msg = {"type": "status", "message": "Ready for next input"}
+                    await websocket.send(json.dumps(status_msg))
+                    print("text_to_speech: Sent 'Ready for next input' status.")
+            except AttributeError as ae:
+                print(f"text_to_speech: AttributeError during websocket send: {ae}. Type of websocket: {type(websocket)}")
+                raise ae # Re-raise to ensure the original error is not masked
         except Exception as e:
-            print(f"Error in text-to-speech conversion: {e}")
+            print(f"text_to_speech: Error in text-to-speech conversion: {e}")
             error_msg = {"type": "error", "message": "Failed to generate speech"}
-            if websocket.open:
+            if not websocket.closed:
                 await websocket.send(json.dumps(error_msg))
+                print("text_to_speech: Sent error message due to TTS failure.")
 
     async def handle_websocket_connection(self, websocket):
+        print(f"handle_websocket_connection: Type of websocket received: {type(websocket)}")
         print(f"New WebSocket connection established. Total connections: {len(self.active_connections) + 1}")
         try:
             self.active_connections.add(websocket)
@@ -91,19 +122,18 @@ class SpeechToTextListener:
                     if message_type == 'audio_data' and not self.is_processing:
                         try:
                             self.is_processing = True
+                            print("handle_websocket_connection: Entered audio_data processing block.")
                             # Send status to client
-                            status_msg = {"type": "status", "message": "Processing audio..."}
-                            # if websocket.open:
-                            await websocket.send(json.dumps(status_msg))
-                                
+                            
                             # Decode base64 audio data
                             audio_base64 = data.get('audio_data')
                             if not audio_base64:
-                                print("Error: No audio data in message")
+                                print("handle_websocket_connection: Error: No audio data in message.")
                                 error_msg = {"type": "error", "message": "No audio data received"}
                                 # if websocket.open:
                                 await websocket.send(json.dumps(error_msg))
                                 self.is_processing = False
+                                print("handle_websocket_connection: Exiting audio_data processing due to no audio data.")
                                 continue
 
                             # Extract and decode the PCM audio data
@@ -113,22 +143,28 @@ class SpeechToTextListener:
                                 else:
                                     audio_data = base64.b64decode(audio_base64)
                                     
-                                print(f"Received complete audio buffer of size: {len(audio_data)} bytes")
+                                print(f"handle_websocket_connection: Received complete audio buffer of size: {len(audio_data)} bytes")
 
                                 # Process the complete audio buffer
                                 if len(audio_data) > 0:
+                                    print("handle_websocket_connection: Calling process_audio_to_text.")
                                     text = await self.process_audio_to_text(audio_data)
+                                    print(f"handle_websocket_connection: process_audio_to_text returned: '{text}'.")
                                     if text and text.strip():
-                                        print(f"Transcribed text: '{text}'")
+                                        print(f"handle_websocket_connection: Transcribed text: '{text}'")
                                         # Get AI response
                                         if self.ai_assistant:
                                             try:
+                                                print("handle_websocket_connection: Calling interact_with_llm.")
                                                 response = self.ai_assistant.interact_with_llm(text)
-                                                print(f"AI response: {response}")
+                                                print(f"handle_websocket_connection: AI response: {response}")
                                                 # Convert response to speech
+                                                print(f"handle_websocket_connection: Type of websocket before text_to_speech: {type(websocket)}")
+                                                print("handle_websocket_connection: Calling text_to_speech.")
                                                 await self.text_to_speech(response, websocket)
+                                                print("handle_websocket_connection: text_to_speech completed.")
                                             except Exception as e:
-                                                print(f"Error getting AI response: {e}")
+                                                print(f"handle_websocket_connection: Error getting AI response: {e}")
                                                 error_msg = {"type": "error", "message": "Failed to get AI response"}
                                                 # if websocket.open:
                                                 await websocket.send(json.dumps(error_msg))
@@ -138,48 +174,57 @@ class SpeechToTextListener:
                                             # if websocket.open:
                                             await websocket.send(json.dumps(status_msg))
                                     else:
-                                        print("No text was transcribed or text was empty")
+                                        print("handle_websocket_connection: No text was transcribed or text was empty.")
                                         status_msg = {"type": "status", "message": "No speech detected. Please try again."}
                                         # if websocket.open:
                                         await websocket.send(json.dumps(status_msg))
                                 else:
-                                    print("Received empty audio data")
+                                    print("handle_websocket_connection: Received empty audio data.")
                                     error_msg = {"type": "error", "message": "Empty audio data received"}
                                     # if websocket.open:
                                     await websocket.send(json.dumps(error_msg))
                                         
                             except Exception as e:
-                                print(f"Error decoding/processing audio data: {e}")
+                                print(f"handle_websocket_connection: Error decoding/processing audio data: {e}")
                                 error_msg = {"type": "error", "message": f"Audio processing failed: {str(e)}"}
                                 # if websocket.open:
                                 await websocket.send(json.dumps(error_msg))
                             finally:
                                 self.is_processing = False
+                                print("handle_websocket_connection: Exited audio_data processing block (finally).")
                                 
                         except Exception as e:
-                            print(f"Error in audio_data handler: {e}")
+                            print(f"handle_websocket_connection: Error in audio_data handler (outer try-except): {e}")
                             error_msg = {"type": "error", "message": "Internal processing error"}
                             # if websocket.open:
                             await websocket.send(json.dumps(error_msg))
                             self.is_processing = False
+                            print("handle_websocket_connection: Exited audio_data processing block (outer try-except).")
                             
                 except json.JSONDecodeError as e:
-                    print(f"Error decoding JSON message: {e}")
+                    print(f"handle_websocket_connection: Error decoding JSON message: {e}")
                     error_msg = {"type": "error", "message": "Invalid message format"}
                     # if websocket.open:
                     await websocket.send(json.dumps(error_msg))
                 except Exception as e:
-                    print(f"Error handling message: {e}")
+                    print(f"handle_websocket_connection: Error handling message (outer loop): {e}")
                     error_msg = {"type": "error", "message": "Message handling failed"}
                     # if websocket.open:
                     await websocket.send(json.dumps(error_msg))
 
         except Exception as e:
-            print(f"WebSocket connection error: {e}")
+            print(f"handle_websocket_connection: WebSocket connection error (outer try-except): {e}")
         finally:
             if websocket in self.active_connections:
                 self.active_connections.remove(websocket)
-            print(f"WebSocket connection closed. Active connections: {len(self.active_connections)}")
+            print(f"handle_websocket_connection: WebSocket connection closed. Active connections: {len(self.active_connections)}")
+            try:
+                if not websocket.closed:
+                    # Always send a graceful close message
+                    await websocket.send(json.dumps({"type": "status", "message": "Connection closed by server"}))
+                    await websocket.close(code=1000, reason="Server shutdown")
+            except Exception as e:
+                print(f"Error sending close message: {e}")
 
     async def start_websocket_server(self, host="localhost", port=8765):
         """Start the WebSocket server."""

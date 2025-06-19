@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Assistant</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        #recordButton {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #recordButton.recording {
+            background-color: #f44336;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+        }
+        .status-message {
+            color: #666;
+            font-style: italic;
+        }
+        .error-message {
+            color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Voice Assistant</h1>
+        <div class="controls">
+            <button id="recordButton">Start Recording</button>
+        </div>
+        <div id="status">
+            <p class="status-message">Ready to record...</p>
+        </div>
+    </div>
+
+    <script>
+        let isRecording = false;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let ws = null;
+        let isProcessing = false;
+
+        // WebSocket setup
+        function setupWebSocket() {
+            ws = new WebSocket('ws://localhost:8765');
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                updateStatus('Connected to server');
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                updateStatus('Disconnected from server', true);
+                setTimeout(setupWebSocket, 3000); // Attempt to reconnect
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                updateStatus('Connection error', true);
+            };
+
+            ws.onmessage = async (event) => {
+                try {
+                    // Check if the message is a status update
+                    if (event.data instanceof Blob) {
+                        // Handle audio response
+                        const audioBlob = event.data;
+                        const audioUrl = URL.createObjectURL(audioBlob);
+                        const audio = new Audio(audioUrl);
+                        // Add a 10-second delay before playing audio and log countdown
+                        updateStatus('Fetching response audio... Please wait.');
+                        let countdown = 10;
+                        const countdownInterval = setInterval(() => {
+                            console.log(`Playing audio in ${countdown} seconds...`);
+                            countdown--;
+                            if (countdown < 0) {
+                                clearInterval(countdownInterval);
+                            }
+                        }, 1000);
+
+                        setTimeout(async () => {
+                            audio.onended = () => {
+                                URL.revokeObjectURL(audioUrl);
+                                isProcessing = false;
+                                updateStatus('Ready for next input');
+                                console.log('Audio playback finished.');
+                            };
+                            audio.onerror = (e) => {
+                                console.error('Audio playback error:', e);
+                                updateStatus('Error playing audio', true);
+                                isProcessing = false;
+                                URL.revokeObjectURL(audioUrl);
+                            };
+                            await audio.play().catch(e => {
+                                console.error('Error attempting to play audio:', e);
+                                updateStatus('Error playing audio', true);
+                                isProcessing = false;
+                                URL.revokeObjectURL(audioUrl);
+                            });
+                            console.log('Audio playback started.');
+                        }, 10000); // 10-second delay
+
+                    } else {
+                        // Handle status messages
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'status') {
+                            updateStatus(data.message);
+                        } else if (data.type === 'error') {
+                            updateStatus(data.message, true);
+                            isProcessing = false;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error handling message:', error);
+                    updateStatus('Error processing server response', true);
+                    isProcessing = false;
+                }
+            };
+        }
+
+        // Initialize WebSocket connection
+        setupWebSocket();
+
+        // Update status display
+        function updateStatus(message, isError = false) {
+            const statusElement = document.querySelector('#status p');
+            statusElement.textContent = message;
+            statusElement.className = isError ? 'error-message' : 'status-message';
+        }
+
+        // Handle recording button click
+        document.getElementById('recordButton').addEventListener('click', async (event) => {
+            event.preventDefault(); // Prevent default form submission or page reload
+            if (isProcessing) {
+                updateStatus('Please wait for the current process to complete');
+                return;
+            }
+
+            if (!isRecording) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+
+                    mediaRecorder.ondataavailable = (event) => {
+                        audioChunks.push(event.data);
+                    };
+
+                    mediaRecorder.onstop = async () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
+                        const reader = new FileReader();
+                        reader.onload = async () => {
+                            if (ws && ws.readyState === WebSocket.OPEN && !isProcessing) {
+                                isProcessing = true;
+                                const base64Audio = reader.result.split(',')[1];
+                                ws.send(JSON.stringify({
+                                    type: 'audio_data',
+                                    audio_data: base64Audio
+                                }));
+                            } else {
+                                updateStatus('Connection not available', true);
+                                isProcessing = false;
+                            }
+                        };
+                        reader.readAsDataURL(audioBlob);
+                    };
+
+                    mediaRecorder.start();
+                    isRecording = true;
+                    document.getElementById('recordButton').textContent = 'Stop Recording';
+                    document.getElementById('recordButton').classList.add('recording');
+                    updateStatus('Recording...');
+
+                } catch (error) {
+                    console.error('Error accessing microphone:', error);
+                    updateStatus('Error accessing microphone', true);
+                }
+            } else {
+                mediaRecorder.stop();
+              
+            }
+        });
+
+        // Handle page unload
+        window.addEventListener('beforeunload', () => {
+            if (ws) {
+                ws.close();
+            }
+        });
+    </script>
+</body>
+</html>
