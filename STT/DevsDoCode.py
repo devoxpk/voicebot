@@ -8,6 +8,7 @@ import io
 import wave
 import os
 from faster import transcribe_audio_faster_whisper
+from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 
 class SpeechToTextListener:
     def __init__(self, language: str = "en-US", ai_assistant=None):
@@ -84,27 +85,30 @@ class SpeechToTextListener:
             # Send the binary audio data
             print(f"text_to_speech: Attributes of websocket: {dir(websocket)}")
             try:
-                if not websocket.closed:
-                    await websocket.send(audio_bytes)
-                    print(f"Sent audio response for text: {text}")
-                    
-                    # Wait a moment before sending the ready status
-                    await asyncio.sleep(0.5)
-                    print("text_to_speech: Waited 0.5 seconds.")
-                    
-                    # Send a message to indicate processing is complete
-                    status_msg = {"type": "status", "message": "Ready for next input"}
-                    await websocket.send(json.dumps(status_msg))
-                    print("text_to_speech: Sent 'Ready for next input' status.")
-            except AttributeError as ae:
-                print(f"text_to_speech: AttributeError during websocket send: {ae}. Type of websocket: {type(websocket)}")
+                await websocket.send(audio_bytes)
+                print(f"Sent audio response for text: {text}")
+                
+                # Wait a moment before sending the ready status
+                await asyncio.sleep(0.5)
+                print("text_to_speech: Waited 0.5 seconds.")
+                
+                # Send a message to indicate processing is complete
+                status_msg = {"type": "status", "message": "Ready for next input"}
+                await websocket.send(json.dumps(status_msg))
+                print("text_to_speech: Sent 'Ready for next input' status.")
+            except (ConnectionClosedOK, ConnectionClosedError) as e:
+                print(f"text_to_speech: WebSocket connection closed while sending audio: {e}")
+            except Exception as ae:
+                print(f"text_to_speech: Unexpected error during websocket send: {ae}. Type of websocket: {type(websocket)}")
                 raise ae # Re-raise to ensure the original error is not masked
         except Exception as e:
             print(f"text_to_speech: Error in text-to-speech conversion: {e}")
             error_msg = {"type": "error", "message": "Failed to generate speech"}
-            if not websocket.closed:
+            try:
                 await websocket.send(json.dumps(error_msg))
                 print("text_to_speech: Sent error message due to TTS failure.")
+            except (ConnectionClosedOK, ConnectionClosedError) as e:
+                print(f"text_to_speech: WebSocket connection closed while sending error message: {e}")
 
     async def handle_websocket_connection(self, websocket):
         print(f"handle_websocket_connection: Type of websocket received: {type(websocket)}")
@@ -130,8 +134,10 @@ class SpeechToTextListener:
                             if not audio_base64:
                                 print("handle_websocket_connection: Error: No audio data in message.")
                                 error_msg = {"type": "error", "message": "No audio data received"}
-                                # if websocket.open:
-                                await websocket.send(json.dumps(error_msg))
+                                try:
+                                    await websocket.send(json.dumps(error_msg))
+                                except (ConnectionClosedOK, ConnectionClosedError) as e:
+                                    print(f"handle_websocket_connection: WebSocket connection closed while sending error: {e}")
                                 self.is_processing = False
                                 print("handle_websocket_connection: Exiting audio_data processing due to no audio data.")
                                 continue
@@ -166,29 +172,39 @@ class SpeechToTextListener:
                                             except Exception as e:
                                                 print(f"handle_websocket_connection: Error getting AI response: {e}")
                                                 error_msg = {"type": "error", "message": "Failed to get AI response"}
-                                                # if websocket.open:
-                                                await websocket.send(json.dumps(error_msg))
+                                                try:
+                                                    await websocket.send(json.dumps(error_msg))
+                                                except (ConnectionClosedOK, ConnectionClosedError) as e:
+                                                    print(f"handle_websocket_connection: WebSocket connection closed while sending error: {e}")
                                         else:
                                             # No AI assistant, just echo the transcription
                                             status_msg = {"type": "status", "message": f"Transcribed: {text}"}
-                                            # if websocket.open:
-                                            await websocket.send(json.dumps(status_msg))
+                                            try:
+                                                await websocket.send(json.dumps(status_msg))
+                                            except (ConnectionClosedOK, ConnectionClosedError) as e:
+                                                print(f"handle_websocket_connection: WebSocket connection closed while sending status: {e}")
                                     else:
                                         print("handle_websocket_connection: No text was transcribed or text was empty.")
                                         status_msg = {"type": "status", "message": "No speech detected. Please try again."}
-                                        # if websocket.open:
-                                        await websocket.send(json.dumps(status_msg))
+                                        try:
+                                            await websocket.send(json.dumps(status_msg))
+                                        except (ConnectionClosedOK, ConnectionClosedError) as e:
+                                            print(f"handle_websocket_connection: WebSocket connection closed while sending status: {e}")
                                 else:
                                     print("handle_websocket_connection: Received empty audio data.")
                                     error_msg = {"type": "error", "message": "Empty audio data received"}
-                                    # if websocket.open:
-                                    await websocket.send(json.dumps(error_msg))
+                                    try:
+                                        await websocket.send(json.dumps(error_msg))
+                                    except (ConnectionClosedOK, ConnectionClosedError) as e:
+                                        print(f"handle_websocket_connection: WebSocket connection closed while sending error: {e}")
                                         
                             except Exception as e:
                                 print(f"handle_websocket_connection: Error decoding/processing audio data: {e}")
                                 error_msg = {"type": "error", "message": f"Audio processing failed: {str(e)}"}
-                                # if websocket.open:
-                                await websocket.send(json.dumps(error_msg))
+                                try:
+                                    await websocket.send(json.dumps(error_msg))
+                                except (ConnectionClosedOK, ConnectionClosedError) as e:
+                                    print(f"handle_websocket_connection: WebSocket connection closed while sending error: {e}")
                             finally:
                                 self.is_processing = False
                                 print("handle_websocket_connection: Exited audio_data processing block (finally).")
@@ -196,21 +212,27 @@ class SpeechToTextListener:
                         except Exception as e:
                             print(f"handle_websocket_connection: Error in audio_data handler (outer try-except): {e}")
                             error_msg = {"type": "error", "message": "Internal processing error"}
-                            # if websocket.open:
-                            await websocket.send(json.dumps(error_msg))
+                            try:
+                                await websocket.send(json.dumps(error_msg))
+                            except (ConnectionClosedOK, ConnectionClosedError) as e:
+                                print(f"handle_websocket_connection: WebSocket connection closed while sending error: {e}")
                             self.is_processing = False
                             print("handle_websocket_connection: Exited audio_data processing block (outer try-except).")
                             
                 except json.JSONDecodeError as e:
                     print(f"handle_websocket_connection: Error decoding JSON message: {e}")
                     error_msg = {"type": "error", "message": "Invalid message format"}
-                    # if websocket.open:
-                    await websocket.send(json.dumps(error_msg))
+                    try:
+                        await websocket.send(json.dumps(error_msg))
+                    except (ConnectionClosedOK, ConnectionClosedError) as e:
+                        print(f"handle_websocket_connection: WebSocket connection closed while sending error: {e}")
                 except Exception as e:
                     print(f"handle_websocket_connection: Error handling message (outer loop): {e}")
                     error_msg = {"type": "error", "message": "Message handling failed"}
-                    # if websocket.open:
-                    await websocket.send(json.dumps(error_msg))
+                    try:
+                        await websocket.send(json.dumps(error_msg))
+                    except (ConnectionClosedOK, ConnectionClosedError) as e:
+                        print(f"handle_websocket_connection: WebSocket connection closed while sending error: {e}")
 
         except Exception as e:
             print(f"handle_websocket_connection: WebSocket connection error (outer try-except): {e}")
@@ -219,10 +241,11 @@ class SpeechToTextListener:
                 self.active_connections.remove(websocket)
             print(f"handle_websocket_connection: WebSocket connection closed. Active connections: {len(self.active_connections)}")
             try:
-                if not websocket.closed:
-                    # Always send a graceful close message
-                    await websocket.send(json.dumps({"type": "status", "message": "Connection closed by server"}))
-                    await websocket.close(code=1000, reason="Server shutdown")
+                # Always send a graceful close message
+                await websocket.send(json.dumps({"type": "status", "message": "Connection closed by server"}))
+                await websocket.close(code=1000, reason="Server shutdown")
+            except (ConnectionClosedOK, ConnectionClosedError) as e:
+                print(f"Error sending close message or closing websocket: {e}")
             except Exception as e:
                 print(f"Error sending close message: {e}")
 

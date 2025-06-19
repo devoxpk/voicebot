@@ -278,7 +278,7 @@
                 };
 
                 ws.onclose = (event) => {
-                    console.log('initializeWebSocket: WebSocket connection closed. Code:', event.code, 'Reason:', event.reason);
+                    alert('initializeWebSocket: WebSocket connection closed. Code:', event.code, 'Reason:', event.reason);
                     isConnecting = false;
                     ws = null;
                     
@@ -636,6 +636,7 @@
         
         // Clean up on page unload
         window.addEventListener('beforeunload', () => {
+            alert('window.addEventListener: Cleaning up resources.');
             if (ws) ws.close();
             stopRecording();
             if (mediaStream) {
