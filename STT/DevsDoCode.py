@@ -7,7 +7,7 @@ import base64
 import io
 import wave
 import os
-from faster import transcribe_audio_faster_whisper
+from faster import transcribe_audio_faster_whisper, initialize_whisper_model
 from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 
 class SpeechToTextListener:
@@ -18,6 +18,13 @@ class SpeechToTextListener:
         self.tts_client = A4F()
         self.is_processing = False
         self.audio_buffer = bytearray()
+        
+        # Initialize Whisper model once at startup
+        print("Initializing Whisper model at startup...")
+        if not initialize_whisper_model(model_size="base", device="cpu", compute_type="int8"):
+            print("Failed to initialize Whisper model!")
+            raise RuntimeError("Failed to initialize Whisper model")
+        print("Whisper model initialized successfully!")
 
     def save_audio_as_mp3(self, audio_data: bytes, filename: str = "received.mp3") -> str:
         """Save audio data as MP3 file."""
@@ -45,8 +52,8 @@ class SpeechToTextListener:
                 print("process_audio_to_text: Failed to save audio as MP3.")
                 return ""
             
-            # Use faster-whisper for transcription
-            print("process_audio_to_text: Transcribing audio with faster-whisper.")
+            # Use faster-whisper for transcription (model already loaded)
+            print("process_audio_to_text: Transcribing audio with pre-loaded faster-whisper.")
             text = transcribe_audio_faster_whisper(audio_file)
             print(f"process_audio_to_text: Transcribed text: {text}")
             
