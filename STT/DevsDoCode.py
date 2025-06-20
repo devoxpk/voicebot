@@ -165,6 +165,7 @@ class SpeechToTextListener:
                                     print(f"handle_websocket_connection: process_audio_to_text returned: '{text}'.")
                                     if text and text.strip():
                                         print(f"handle_websocket_connection: Transcribed text: '{text}'")
+                                        # Process transcribed text but don't send it to frontend
                                         # Get AI response
                                         if self.ai_assistant:
                                             try:
@@ -184,8 +185,8 @@ class SpeechToTextListener:
                                                 except (ConnectionClosedOK, ConnectionClosedError) as e:
                                                     print(f"handle_websocket_connection: WebSocket connection closed while sending error: {e}")
                                         else:
-                                            # No AI assistant, just echo the transcription
-                                            status_msg = {"type": "status", "message": f"Transcribed: {text}"}
+                                            # No AI assistant, just send a ready status
+                                            status_msg = {"type": "status", "message": "Ready for next input"}
                                             try:
                                                 await websocket.send(json.dumps(status_msg))
                                             except (ConnectionClosedOK, ConnectionClosedError) as e:
