@@ -13,18 +13,31 @@ from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 class SpeechToTextListener:
     def __init__(self, language: str = "en-US", ai_assistant=None):
         self.language = language
-        self.ai_assistant = ai_assistant
         self.active_connections = set()
         self.tts_client = A4F()
         self.is_processing = False
         self.audio_buffer = bytearray()
         
-        # Initialize Whisper model once at startup
-        print("Initializing Whisper model at startup...")
+        # Initialize Whisper model and OpenAI model at startup
+        print("Initializing models at startup...")
         if not initialize_whisper_model(model_size="base", device="cpu", compute_type="int8"):
             print("Failed to initialize Whisper model!")
             raise RuntimeError("Failed to initialize Whisper model")
         print("Whisper model initialized successfully!")
+        
+        # Initialize AI assistant
+        if ai_assistant:
+            print("Initializing OpenAI model...")
+            try:
+                self.ai_assistant = ai_assistant
+                # Warm up the model with a test prompt
+                self.ai_assistant.interact_with_llm("Hello")
+                print("OpenAI model initialized successfully!")
+            except Exception as e:
+                print(f"Failed to initialize OpenAI model: {e}")
+                raise RuntimeError("Failed to initialize OpenAI model")
+        else:
+            self.ai_assistant = None
 
     def save_audio_as_mp3(self, audio_data: bytes, filename: str = "received.mp3") -> str:
         """Save audio data as MP3 file."""
