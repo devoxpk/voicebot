@@ -130,7 +130,61 @@ class SpeechToTextListener:
                     message_type = data.get('type')
                     print(f"Received message type: {message_type}")
 
-                    if message_type == 'audio_data' and not self.is_processing:
+                    if message_type == 'text_data' and not self.is_processing:
+                        try:
+                            self.is_processing = True
+                            print("handle_websocket_connection: Processing text data.")
+                            
+                            text = data.get('text')
+                            if not text:
+                                print("handle_websocket_connection: Error: No text data in message.")
+                                error_msg = {"type": "error", "message": "No text data received"}
+                                try:
+                                    await websocket.send(json.dumps(error_msg))
+                                except (ConnectionClosedOK, ConnectionClosedError) as e:
+                                    print(f"handle_websocket_connection: WebSocket connection closed while sending error: {e}")
+                                self.is_processing = False
+                                continue
+
+                            # Process text with AI assistant
+                            if self.ai_assistant:
+                                try:
+                                    print("handle_websocket_connection: Calling interact_with_llm.")
+                                    response = self.ai_assistant.interact_with_llm(text)
+                                    print(f"handle_websocket_connection: AI response: {response}")
+                                    # Send text response first
+                                    response_msg = {"type": "response", "message": response}
+                                    await websocket.send(json.dumps(response_msg))
+                                    # Convert response to speech
+                                    await self.text_to_speech(response, websocket)
+                                except (ConnectionClosedOK, ConnectionClosedError) as e:
+                                    print(f"handle_websocket_connection: WebSocket connection closed: {e}")
+                                except Exception as e:
+                                    print(f"handle_websocket_connection: Error getting AI response: {e}")
+                                    error_msg = {"type": "error", "message": "Failed to get AI response"}
+                                    try:
+                                        await websocket.send(json.dumps(error_msg))
+                                    except (ConnectionClosedOK, ConnectionClosedError) as e:
+                                        print(f"handle_websocket_connection: WebSocket connection closed while sending error: {e}")
+                            else:
+                                status_msg = {"type": "status", "message": "AI assistant not available"}
+                                try:
+                                    await websocket.send(json.dumps(status_msg))
+                                except (ConnectionClosedOK, ConnectionClosedError) as e:
+                                    print(f"handle_websocket_connection: WebSocket connection closed while sending status: {e}")
+                            
+                            self.is_processing = False
+                            
+                        except Exception as e:
+                            print(f"handle_websocket_connection: Error in text_data handler: {e}")
+                            error_msg = {"type": "error", "message": "Internal processing error"}
+                            try:
+                                await websocket.send(json.dumps(error_msg))
+                            except (ConnectionClosedOK, ConnectionClosedError) as e:
+                                print(f"handle_websocket_connection: WebSocket connection closed while sending error: {e}")
+                            self.is_processing = False
+
+                    elif message_type == 'audio_data' and not self.is_processing:
                         try:
                             self.is_processing = True
                             print("handle_websocket_connection: Entered audio_data processing block.")
@@ -172,11 +226,16 @@ class SpeechToTextListener:
                                                 print("handle_websocket_connection: Calling interact_with_llm.")
                                                 response = self.ai_assistant.interact_with_llm(text)
                                                 print(f"handle_websocket_connection: AI response: {response}")
+                                                # Send text response first
+                                                response_msg = {"type": "response", "message": response}
+                                                await websocket.send(json.dumps(response_msg))
                                                 # Convert response to speech
                                                 print(f"handle_websocket_connection: Type of websocket before text_to_speech: {type(websocket)}")
                                                 print("handle_websocket_connection: Calling text_to_speech.")
                                                 await self.text_to_speech(response, websocket)
                                                 print("handle_websocket_connection: text_to_speech completed.")
+                                            except (ConnectionClosedOK, ConnectionClosedError) as e:
+                                                print(f"handle_websocket_connection: WebSocket connection closed: {e}")
                                             except Exception as e:
                                                 print(f"handle_websocket_connection: Error getting AI response: {e}")
                                                 error_msg = {"type": "error", "message": "Failed to get AI response"}

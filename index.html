@@ -1,655 +1,81 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice Chat Assistant</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            margin: 0;
-            background: linear-gradient(135deg, #6e8efb, #a777e3);
-        }
-        .container {
-            text-align: center;
-            background: rgba(255, 255, 255, 0.9);
-            padding: 2rem;
-            border-radius: 15px;
-            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
-        }
-        .chat-button {
-            background: #4CAF50;
-            color: white;
-            border: none;
-            padding: 15px 30px;
-            font-size: 18px;
-            border-radius: 25px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            margin: 20px 0;
-        }
-        .chat-button:hover {
-            background: #45a049;
-            transform: scale(1.05);
-        }
-        .chat-button:active {
-            transform: scale(0.95);
-        }
-        .status {
-            margin-top: 20px;
-            font-size: 16px;
-            color: #666;
-        }
-        .recording {
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
-        .conversation {
-            margin-top: 20px;
-            max-height: 200px;
-            overflow-y: auto;
-            width: 100%;
-            text-align: left;
-            padding: 10px;
-            background: rgba(255, 255, 255, 0.7);
-            border-radius: 10px;
-        }
-        .user-message {
-            color: #2196F3;
-            margin-bottom: 5px;
-        }
-        .assistant-message {
-            color: #4CAF50;
-            margin-bottom: 10px;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <title>Lip Sync with Rhubarb WASM</title>
+  <style>
+    #avatar { width: 200px; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1>AI Voice Assistant</h1>
-        <button id="startChat" class="chat-button">Start Voice Chat</button>
-        <p id="status" class="status">Click to start chatting</p>
-        <div id="conversation" class="conversation" style="display: none;"></div>
-    </div>
+  <h2>Lip‑Sync Demo (Client‑Side WASM)</h2>
+  <input type="file" id="audioInput" accept="audio/*"><br>
+  <input type="file" id="imgInput" accept="image/png"><br>
+  <button id="processBtn">Process & Animate</button><br>
+  <audio id="player" controls></audio><br>
+  <canvas id="avatar"></canvas>
 
-    <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.0/lame.min.js"></script>
-    <script>
-        let ws = null;
-        let mediaRecorder = null;
-        let audioChunks = [];
-        let sessionId = null;
-        let isConnecting = false;
-        let isRecording = false;
-        let audioContext = null;
-        let mediaStream = null;
-        let isProcessing = false;
-        let processor = null;
-        let source = null;
-        let reconnectAttempts = 0;
-        let maxReconnectAttempts = 5;
-        let reconnectDelay = 10000; // Start with 1 second
-        const startButton = document.getElementById('startChat');
-        const statusText = document.getElementById('status');
-        const conversationDiv = document.getElementById('conversation');
-        
-        console.log('Initializing voice chat interface...');
-        
-        // Prevent page reload on unhandled errors
-        window.addEventListener('error', (event) => {
-            console.error('Global error caught:', event.error);
-            event.preventDefault();
-            return false;
-        });
-        
-        window.addEventListener('unhandledrejection', (event) => {
-            console.error('Unhandled promise rejection:', event.reason);
-            event.preventDefault();
-        });
+  <script type="module">
+    import { Rhubarb } from "rhubarb-lip-sync-wasm";
 
-        // Auto-reconnection function
-        async function attemptReconnection() {
-            if (reconnectAttempts >= maxReconnectAttempts) {
-                console.log('Max reconnection attempts reached');
-                statusText.textContent = 'Connection failed. Please refresh the page.';
-                return;
-            }
-            
-            reconnectAttempts++;
-            console.log(`Attempting reconnection ${reconnectAttempts}/${maxReconnectAttempts}`);
-            statusText.textContent = `Reconnecting... (${reconnectAttempts}/${maxReconnectAttempts})`;
-            
-            await new Promise(resolve => setTimeout(resolve, reconnectDelay));
-            
-            try {
-                await initializeWebSocket();
-                reconnectAttempts = 0; // Reset on successful connection
-                reconnectDelay = 1000; // Reset delay
-            } catch (error) {
-                console.error('Reconnection failed:', error);
-                reconnectDelay = Math.min(reconnectDelay * 2, 10000); // Exponential backoff, max 10 seconds
-                attemptReconnection();
-            }
-        }
+    const audioInput = document.getElementById("audioInput");
+    const imgInput = document.getElementById("imgInput");
+    const btn = document.getElementById("processBtn");
+    const player = document.getElementById("player");
+    const canvas = document.getElementById("avatar");
+    const ctx = canvas.getContext("2d");
 
-         async function initializeWebSocket() {
-            console.log('initializeWebSocket: Attempting to initialize WebSocket connection...');
-            if (isConnecting) {
-                console.log('initializeWebSocket: Connection already in progress, returning.');
-                return;
-            }
-            isConnecting = true;
+    let imgSheet;
 
-            try {
-                sessionId = Date.now().toString(36) + Math.random().toString(36).substr(2);
-                console.log('initializeWebSocket: Generated session ID:', sessionId);
-                ws = new WebSocket('ws://localhost:8765');
-                console.log('initializeWebSocket: WebSocket object created.');
-                
-                ws.onopen = () => {
-                    isConnecting = false;
-                    statusText.textContent = 'Connected! Press the button to start/stop speaking';
-                    startButton.textContent = 'Start Speaking';
-                    conversationDiv.style.display = 'block';
-                    console.log('initializeWebSocket: WebSocket connection opened successfully.');
-                };
+    imgInput.addEventListener("change", e => {
+      const file = e.target.files[0];
+      const img = new Image();
+      img.onload = () => {
+        imgSheet = img;
+        canvas.width = img.width / 8; // assuming 8 mouth frames
+        canvas.height = img.height;
+      };
+      img.src = URL.createObjectURL(file);
+    });
 
-                ws.onmessage = async (event) => {
-                    
-                    try {
-                        if (typeof event.data === 'string') {
-                            // Move JSON.parse inside the try block for proper error handling
-                            // The "Processing audio..." check needs to be done after parsing, so it also needs to be inside the try.
-                            // This means the early return for "Processing audio..." will also be inside the try.
-                            alert(" message rec"+event.data);
-                            alert('initializeWebSocket: Received message from WebSocket. Type: ' + (typeof event.data));
-                            alert('initializeWebSocket: Message is string. Attempting to parse as JSON.');
-                            try {
-                                const jsonData = JSON.parse(event.data); // Moved here
-                                alert('initializeWebSocket: Parsed JSON data: ' + JSON.stringify(jsonData));
+    btn.addEventListener("click", async () => {
+      const audioFile = audioInput.files[0];
+      if (!audioFile || !imgSheet) return alert("Upload audio and image first!");
 
-                                if (jsonData.type === 'status' && jsonData.message === 'Processing audio...') {
-                                    isProcessing = true;
-                                    startButton.disabled = true;
-                                    statusText.textContent = jsonData.message;
-                                    return; // Terminate onmessage function immediately
-                                }
+      // Load audio
+      const buf = await audioFile.arrayBuffer();
+      const audioCtx = new AudioContext();
+      const audioBuffer = await audioCtx.decodeAudioData(buf);
 
-                                if (jsonData.type === 'status') {
-                                    statusText.textContent = jsonData.message;
-                                    alert('initializeWebSocket: Status message received: ' + jsonData.message);
-                                    if (jsonData.message === 'Ready for next input') {
-                                        isProcessing = false;
-                                        startButton.textContent = 'Start Speaking';
-                                        startButton.disabled = false;
-                                        alert('initializeWebSocket: Ready for next input. Processing state reset.');
-                                    }
-                                } else if (jsonData.type === 'error') { // Corrected structure
-                                    alert('initializeWebSocket: Backend error: ' + jsonData.message);
-                                    statusText.textContent = 'Error: ' + jsonData.message;
-                                    isProcessing = false;
-                                    startButton.disabled = false;
-                                    startButton.textContent = 'Start Speaking';
-                                }
-                            } catch (e) {
-                                alert('initializeWebSocket: Message is not JSON. Treating as plain text.');
-                                // Not JSON, treat as plain text
-                                statusText.textContent = event.data;
-                                alert('initializeWebSocket: Received plain text message: ' + event.data);
-                            }
-                        } else {
-                            alert('initializeWebSocket: Received binary audio data from backend, size: ' + event.data.size);
-                            // Handle audio data
-                            try {
-                                const audioBlob = new Blob([event.data], { type: 'audio/mp3' });
-                                const audioUrl = URL.createObjectURL(audioBlob);
-                                const audio = new Audio(audioUrl);
-                                alert('initializeWebSocket: Audio Blob and URL created.');
-                                
-                                // Add assistant message to conversation
-                                const assistantMessage = document.createElement('p');
-                                assistantMessage.className = 'assistant-message';
-                                assistantMessage.textContent = 'Assistant: [Voice Response]';
-                                conversationDiv.appendChild(assistantMessage);
-                                conversationDiv.scrollTop = conversationDiv.scrollHeight;
-                                alert('initializeWebSocket: Assistant message added to conversation.');
-                                
-                                statusText.textContent = 'Received audio response, playing...';
-                                
-                                audio.onplay = () => {
-                                    alert('initializeWebSocket: Started playing audio response');
-                                    statusText.textContent = 'Playing response...';
-                                };
-                                
-                                audio.onended = () => {
-                                    alert('initializeWebSocket: Finished playing audio response');
-                                    URL.revokeObjectURL(audioUrl);
-                                    statusText.textContent = 'Ready for next input';
-                                    isProcessing = false;
-                                    startButton.disabled = false;
-                                    startButton.textContent = 'Start Speaking';
-                                };
-                                
-                                audio.onerror = (error) => {
-                                    alert('initializeWebSocket: Error playing audio: ' + error);
-                                    statusText.textContent = 'Error playing audio response';
-                                    isProcessing = false;
-                                    startButton.disabled = false;
-                                    startButton.textContent = 'Start Speaking';
-                                    URL.revokeObjectURL(audioUrl);
-                                };
-                                
-                                // Wait for audio to be loaded before playing
-                                audio.addEventListener('canplaythrough', () => {
-                                    alert('initializeWebSocket: Audio can play through. Attempting to play.');
-                                    audio.play().catch(e => {
-                                        alert('initializeWebSocket: Audio play promise rejected: ' + e);
-                                        statusText.textContent = 'Error playing audio response (promise rejected)';
-                                        isProcessing = false;
-                                        startButton.disabled = false;
-                                        startButton.textContent = 'Start Speaking';
-                                        URL.revokeObjectURL(audioUrl);
-                                    });
-                                }, { once: true });
-                                
-                            } catch (error) {
-                                alert('initializeWebSocket: Error processing audio data: ' + error);
-                                statusText.textContent = 'Error playing audio response';
-                                isProcessing = false;
-                                startButton.disabled = false;
-                                startButton.textContent = 'Start Speaking';
-                            }
-                        }
-                    } catch (error) {
-                        alert('initializeWebSocket: Error in onmessage handler: ' + error);
-                        statusText.textContent = 'Error processing server response';
-                        isProcessing = false;
-                        startButton.disabled = false;
-                        startButton.textContent = 'Start Speaking';
-                    }
-                };
+      // Play audio
+      const blob = new Blob([buf], { type: audioFile.type });
+      player.src = URL.createObjectURL(blob);
+      player.play();
 
-                ws.onclose = (event) => {
-                    alert('initializeWebSocket: WebSocket connection closed. Code:', event.code, 'Reason:', event.reason);
-                    isConnecting = false;
-                    ws = null;
-                    
-                    // Don't auto-reconnect for normal closure (code 1000)
-                    if (event.code === 1000) {
-                        statusText.textContent = 'Connection closed normally. Click to reconnect';
-                        console.log('initializeWebSocket: Connection closed normally.');
-                        startButton.textContent = 'Start Voice Chat';
-                    } else {
-                        console.log('initializeWebSocket: Connection lost unexpectedly. Attempting auto-reconnection.');
-                        // Attempt auto-reconnection for unexpected closures
-                        attemptReconnection();
-                    }
-                    
-                    // Stop recording gracefully
-                    if (isRecording) {
-                        isRecording = false;
-                        statusText.classList.remove('recording');
-                        console.log('initializeWebSocket: Recording stopped due to connection closure.');
-                    }
-                    
-                    isProcessing = false;
-                    startButton.disabled = false;
-                    
-                    // Clean up media resources
-                    if (processor) {
-                        processor.disconnect();
-                        processor = null;
-                        console.log('initializeWebSocket: Audio processor cleaned up.');
-                    }
-                    if (source) {
-                        source.disconnect();
-                        source = null;
-                        console.log('initializeWebSocket: Audio source cleaned up.');
-                    }
-                    if (mediaStream) {
-                        mediaStream.getTracks().forEach(track => track.stop());
-                        mediaStream = null;
-                        console.log('initializeWebSocket: MediaStream tracks stopped and cleaned up.');
-                    }
-                    if (audioContext && audioContext.state !== 'closed') {
-                        audioContext.close();
-                        audioContext = null;
-                        console.log('initializeWebSocket: AudioContext closed and cleaned up.');
-                    }
-                    
-                    // Clear audio chunks
-                    audioChunks = [];
-                    console.log('initializeWebSocket: Audio chunks cleared.');
-                };
+      // Analyze with Rhubarb WASM
+      const rh = await Rhubarb.create();
+      const result = await rh.getLipSync(audioBuffer);
+      const cues = result.mouthCues;
 
-                ws.onerror = (error) => {
-                    alert('initializeWebSocket: WebSocket error occurred.');
-                    alert('initializeWebSocket: WebSocket error: ' + error);
-                    isConnecting = false;
-                    statusText.textContent = 'Connection error. Please try again';
-                    
-                    // Don't set ws to null here, let onclose handle cleanup
-                    // This prevents race conditions
-                    
-                    // Stop recording gracefully
-                    if (isRecording) {
-                        isRecording = false;
-                        statusText.classList.remove('recording');
-                        alert('initializeWebSocket: Recording stopped due to WebSocket error.');
-                    }
-                    
-                    isProcessing = false;
-                    startButton.disabled = false;
-                    startButton.textContent = 'Start Voice Chat';
-                };
-           
-            } catch (error) {
-                alert('initializeWebSocket: Error initializing WebSocket occurred.');
-                alert('initializeWebSocket: Error initializing WebSocket: ' + error);
-                isConnecting = false;
-                statusText.textContent = 'Failed to connect. Please try again';
-                isProcessing = false;
-                startButton.disabled = false;
-            }
-        }
-    
-        function stopRecording() {
-            if (isRecording) {
-                console.log('stopRecording: isRecording is true. Initiating stop sequence.');
-                isRecording = false;
-                statusText.classList.remove('recording');
-                statusText.textContent = 'Processing...';
-                startButton.textContent = 'Processing...';
-                startButton.disabled = true;
-                isProcessing = true;
+      // Animate
+      let startTime = audioCtx.currentTime;
+      function render() {
+        const t = audioCtx.currentTime - startTime;
+        const cue = cues.find(c => t >= c.start && t < c.end);
+        const frame = cue ? cue.value.charCodeAt(0) - 65 : 0;
 
-                try {
-                    console.log('stopRecording: Disconnecting audio processing nodes.');
-                    // Disconnect audio processing nodes
-                    if (processor) {
-                        processor.disconnect();
-                        processor = null;
-                        console.log('stopRecording: Audio processor disconnected.');
-                    }
-                    if (source) {
-                        source.disconnect();
-                        source = null;
-                        console.log('stopRecording: Audio source disconnected.');
-                    }
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(
+          imgSheet,
+          frame * canvas.width, 0,
+          canvas.width, canvas.height,
+          0, 0, canvas.width, canvas.height
+        );
 
-                    // Combine all Float32Array chunks into a single Float32Array
-                    if (audioChunks.length > 0) {
-                        console.log(`stopRecording: Combining ${audioChunks.length} audio chunks.`);
-                        const combinedFloat32 = new Float32Array(audioChunks.reduce((acc, chunk) => acc + chunk.length, 0));
-                        let offset = 0;
-                        for (const chunk of audioChunks) {
-                            combinedFloat32.set(chunk, offset);
-                            offset += chunk.length;
-                        }
-                        console.log(`stopRecording: Combined Float32Array size: ${combinedFloat32.length}.`);
-
-                        // Convert Float32Array to Int16Array for LAME (16-bit PCM)
-                        console.log('stopRecording: Converting Float32Array to Int16Array.');
-                        const pcm16 = new Int16Array(combinedFloat32.length);
-                        for (let i = 0; i < combinedFloat32.length; i++) {
-                            pcm16[i] = Math.max(-1, Math.min(1, combinedFloat32[i])) * 0x7FFF;
-                        }
-                        console.log(`stopRecording: Converted Int16Array size: ${pcm16.length}.`);
-
-                        // Initialize LAME encoder
-                        const sampleRate = audioContext.sampleRate; // Use the actual sample rate from AudioContext
-                        console.log(`stopRecording: Initializing LAME encoder with sample rate: ${sampleRate}.`);
-                        const mp3encoder = new lamejs.Mp3Encoder(1, sampleRate, 128); // mono, 16kHz, 128kbps
-                        const mp3Data = [];
-
-                        const MAX_SAMPLES = 1152; // LAME's internal buffer size
-                        for (let i = 0; i < pcm16.length; i += MAX_SAMPLES) {
-                            const samples = pcm16.subarray(i, i + MAX_SAMPLES);
-                            const mp3buf = mp3encoder.encodeBuffer(samples);
-                            if (mp3buf.length > 0) {
-                                mp3Data.push(mp3buf);
-                            }
-                        }
-                        const mp3buf = mp3encoder.flush(); // Flush remaining data
-                        if (mp3buf.length > 0) {
-                            mp3Data.push(mp3buf);
-                        }
-                        console.log(`stopRecording: Encoded ${mp3Data.length} MP3 buffers.`);
-
-                        const combinedMp3 = new Uint8Array(mp3Data.reduce((acc, buf) => acc + buf.length, 0));
-                        offset = 0;
-                        for (const buf of mp3Data) {
-                            combinedMp3.set(buf, offset);
-                            offset += buf.length;
-                        }
-                        console.log(`stopRecording: Combined MP3 data size: ${combinedMp3.length} bytes.`);
-
-                        // Convert Uint8Array to binary string for base64 encoding
-                        console.log('stopRecording: Converting Uint8Array to binary string for base64 encoding.');
-                        let binaryString = '';
-                        for (let i = 0; i < combinedMp3.length; i++) {
-                            binaryString += String.fromCharCode(combinedMp3[i]);
-                        }
-                        
-                        // Convert to base64
-                        const base64Data = btoa(binaryString);
-                        console.log(`stopRecording: Base64 encoded data length: ${base64Data.length}.`);
-                        
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            console.log('stopRecording: WebSocket is open. Preparing to send audio data.');
-                            const audioData = {
-                                type: 'audio_data',
-                                audio_data: 'data:audio/mp3;base64,' + base64Data
-                            };
-                            try {
-                                ws.send(JSON.stringify(audioData));
-                                console.log('stopRecording: Sent MP3 audio data via WebSocket.');
-                                
-                                // Add user message to conversation
-                                const userMessage = document.createElement('p');
-                                userMessage.className = 'user-message';
-                                userMessage.textContent = 'You: [Voice Input]';
-                                conversationDiv.appendChild(userMessage);
-                                conversationDiv.scrollTop = conversationDiv.scrollHeight;
-                                
-                                // Keep processing state until we get a response
-                                statusText.textContent = 'Waiting for response...';
-                            } catch (sendError) {
-                                console.error('stopRecording: Error sending WebSocket message:', sendError);
-                                statusText.textContent = 'Error sending audio data. Please try again.';
-                                isProcessing = false;
-                                startButton.disabled = false;
-                                startButton.textContent = 'Start Speaking';
-                            }
-                        } else {
-                            console.error('stopRecording: WebSocket is not open, state:', ws ? ws.readyState : 'null');
-                            statusText.textContent = 'Connection lost. Please reconnect.';
-                            isProcessing = false;
-                            startButton.disabled = false;
-                            startButton.textContent = 'Start Voice Chat';
-                        }
-                    } else {
-                        console.log('stopRecording: No audio data recorded.');
-                        statusText.textContent = 'No audio recorded. Try again.';
-                        isProcessing = false;
-                        startButton.disabled = false;
-                        startButton.textContent = 'Start Speaking';
-                    }
-                } catch (error) {
-                    console.error('stopRecording: Error processing audio:', error);
-                    statusText.textContent = 'Error processing audio: ' + error.message;
-                    isProcessing = false;
-                    startButton.disabled = false;
-                    startButton.textContent = 'Start Speaking';
-                    
-                    // Prevent error from bubbling up and causing page reload
-                    if (error instanceof Error) {
-                        error.preventDefault = () => {};
-                    }
-                }
-                
-                // Clean up
-                console.log('stopRecording: Clearing audio chunks.');
-                audioChunks = [];
-            }
-        }
-
-        async function startRecording() {
-            console.log('startRecording: Attempting to start recording.');
-            if (!mediaStream) {
-                try {
-                    console.log('startRecording: Requesting media devices (microphone access).');
-                    mediaStream = await navigator.mediaDevices.getUserMedia({
-                        audio: {
-                            channelCount: 1,
-                            sampleRate: 16000,
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true,
-                        }
-                    });
-                    console.log('startRecording: Microphone access granted. MediaStream obtained.');
-                } catch (err) {
-                    console.error('startRecording: Error accessing microphone:', err);
-                    statusText.textContent = 'Error: Could not access microphone. Please allow microphone access.';
-                    startButton.disabled = false;
-                    startButton.textContent = 'Start Voice Chat';
-                    
-                    // Prevent error from causing page reload
-                    if (err instanceof Error) {
-                        err.preventDefault = () => {};
-                    }
-                    return;
-                }
-            }
-
-            if (!audioContext || audioContext.state === 'closed') {
-                console.log('startRecording: Initializing AudioContext.');
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                console.log(`startRecording: AudioContext initialized. Sample Rate: ${audioContext.sampleRate}`);
-            }
-
-            if (audioContext.state === 'suspended') {
-                console.log('startRecording: Resuming AudioContext.');
-                await audioContext.resume();
-                console.log('startRecording: AudioContext resumed.');
-            }
-
-            console.log('startRecording: Creating MediaStreamSource.');
-            source = audioContext.createMediaStreamSource(mediaStream);
-            console.log('startRecording: MediaStreamSource created.');
-
-            // Create a ScriptProcessorNode to get audio samples
-            // Buffer size: 4096, 1 input channel, 1 output channel
-            console.log('startRecording: Creating ScriptProcessorNode.');
-            processor = audioContext.createScriptProcessor(4096, 1, 1);
-            processor.onaudioprocess = (event) => {
-                // Get the audio data from the input buffer
-                const inputBuffer = event.inputBuffer.getChannelData(0);
-                audioChunks.push(new Float32Array(inputBuffer)); // Store as Float32Array
-                // console.log(`startRecording: Audio data chunk recorded. Total chunks: ${audioChunks.length}`);
-            };
-            console.log('startRecording: ScriptProcessorNode created and audio process event handler set.');
-
-            // Connect nodes
-            console.log('startRecording: Connecting audio nodes: source -> processor -> destination.');
-            source.connect(processor);
-            processor.connect(audioContext.destination);
-            console.log('startRecording: Audio nodes connected.');
-
-            isRecording = true;
-            statusText.classList.add('recording');
-            statusText.textContent = 'Recording... Speak now!';
-            startButton.textContent = 'Stop Speaking';
-            console.log('startRecording: Recording started successfully.');
-        }
-    
-       async function toggleRecording() {
-            console.log('toggleRecording: Function called.');
-            if (!ws || ws.readyState !== WebSocket.OPEN) {
-                console.warn('toggleRecording: WebSocket not connected or not open. Current state:', ws ? ws.readyState : 'null');
-                statusText.textContent = 'WebSocket not connected. Please refresh the page.';
-                return;
-            }
-
-            if (isProcessing) {
-                console.log('toggleRecording: Currently processing, ignoring toggle request.');
-                statusText.textContent = 'Please wait for current processing to finish.';
-                return;
-            }
-
-            if (!isRecording) {
-                console.log('toggleRecording: Starting recording process.');
-                startRecording();
-                startButton.textContent = 'Stop Speaking';
-                statusText.textContent = 'Recording... Speak now!';
-                statusText.classList.add('recording');
-                console.log('toggleRecording: Recording started, UI updated.');
-            } else {
-                console.log('toggleRecording: Stopping recording process.');
-                await stopRecording();
-                // Removed the 10-second delay that was causing page reload issues
-                startButton.textContent = 'Start Speaking';
-                statusText.textContent = 'Processing audio...';
-                statusText.classList.remove('recording');
-                console.log('toggleRecording: Recording stopped, UI updated.');
-            }
-        }
-    
-        startButton.addEventListener('click', async (event) => {
-            try {
-                event.preventDefault(); // Prevent default form submission behavior
-                if (!ws || ws.readyState !== WebSocket.OPEN) {
-                    console.log('Initializing WebSocket connection...');
-                    await initializeWebSocket();
-                } else if (isProcessing) {
-                    // Do nothing if we're processing
-                    return;
-                } else if (isRecording) {
-                    // Stop recording if already recording
-                    await stopRecording();
-                    
-                } else {
-                    // Start recording
-                    await startRecording();
-                }
-            } catch (error) {
-                console.error('Error in button click handler:', error);
-                statusText.textContent = 'An error occurred. Please try again.';
-                isProcessing = false;
-                startButton.disabled = false;
-                startButton.textContent = 'Start Voice Chat';
-                
-                // Prevent error from causing page reload
-                event.preventDefault();
-                return false;
-            }
-        });
-        
-        // Clean up on page unload
-        window.addEventListener('beforeunload', () => {
-            alert('window.addEventListener: Cleaning up resources.');
-            if (ws) ws.close();
-            stopRecording();
-            if (mediaStream) {
-                mediaStream.getTracks().forEach(track => track.stop());
-                mediaStream = null;
-            }
-            if (audioContext) {
-                audioContext.close();
-                audioContext = null;
-            }
-        });
-    
-    
-    </script>
+        if (t < audioBuffer.duration) requestAnimationFrame(render);
+      }
+      requestAnimationFrame(render);
+    });
+  </script>
 </body>
 </html>
