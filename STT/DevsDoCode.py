@@ -96,7 +96,7 @@ class SpeechToTextListener:
             print(f"text_to_speech: Generating audio for text: '{text[:50]}...'")
             # Generate the audio
             audio_bytes = self.tts_client.audio.speech.create(
-                model="tts-1-hd",
+                model="tts-1",
                 input=text,
                 voice="onyx"
             )
