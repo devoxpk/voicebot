@@ -9,10 +9,7 @@ multiprocessing.set_start_method('spawn', force=True)
 
 print("\nInitializing AI Voice Assistant System...")
 
-# Initialize audio system
-if not init_audio():
-    print("Failed to initialize audio system")
-    exit(1)
+
 
 print("System initialization completed.\n")
 
@@ -32,7 +29,7 @@ async def main():
         await server.wait_closed()
     finally:
         print("\nCleaning up resources...")
-        stop_audio_processor()
+        
         if hasattr(stt_listener, 'driver') and stt_listener.driver:
             print("Quitting STT listener driver")
             stt_listener.driver.quit()
