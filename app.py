@@ -2,7 +2,7 @@ import os
 import asyncio
 from rag.AIVoiceAssistant import AIVoiceAssistant
 from STT.DevsDoCode import SpeechToTextListener
-from voice_service import init_audio, stop_audio_processor
+
 import multiprocessing
 
 multiprocessing.set_start_method('spawn', force=True)
