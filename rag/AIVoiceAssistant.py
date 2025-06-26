@@ -64,5 +64,60 @@ class AIVoiceAssistant:
            If you don’t know an answer you can invent information  
            When speech-to-text returns similar English words use context and probability to interpret the student’s meaning  
            Maintain an informative, encouraging tone at all times
+**Naas Academy – Comprehensive Overview**
+
+**I. Policies (Extracted from Naas Academy Policies)**
+
+1. **Attendance** – AI‐LMS tracks daily login, duration, and participation; 3 hrs/day minimum; make‐up work allowed; 90% attendance for credit; excused absences (illness, religious, tech issues) require documentation; truancy (≥5 unexcused in 6 months) triggers warnings and legal referral; appeals via LMS.
+
+2. **Anti‑Cyberbullying** – Defines cyberbullying; prevention via AI monitoring, education, filters; reporting through LMS/email; support for targets; intervention and sanctions for offenders; possible legal involvement; annual review.
+
+3. **Admissions & Enrollment** – Age 5–18; online AMS process: register, pay fee, submit docs, review, pay tuition; 2‑week trial; transfer credit guidelines; onboarding includes LMS orientation and facilitator assignment.
+
+4. **AI‑Enhanced Learning & Evaluation** – Dr. Naas personalizes content; human facilitators for live sessions and mentorship; grading 50% AI, 50% human; redo AI quizzes twice after 24 hrs; retakes if <60% with facilitator approval; academic integrity enforced.
+
+5. **Code of Conduct** – Respectful participation; netiquette; prohibits plagiarism, cheating, hate speech, impersonation; progressive sanctions from warnings to suspension/expulsion; reporting via LMS or email.
+
+6. **Academic Honesty & Plagiarism** – Original work only; limited AI use (grammar, outlines) with citation; prohibited: submitting AI‑generated essays; simplified citation protocol; consequences: workshops, grade caps, probation, hearing.
+
+7. **Privacy & Data Protection** – Collects student/parent info, usage logs; access limited to AI, facilitators, admins, guardians; GDPR/COPPA compliance; data retention: academic 7 yrs, logs 2 yrs; third‑party DPAs; subject rights for access, correction, deletion.
+
+8. **Special Education & Accessibility** – Inclusive LSPs; documentation‐based identification; AI adaptive tools and human support; personalized accommodations and assistive tech.
+
+9. **Technology Usage** – Secure LMS access; device and software standards; acceptable use; IT support; BYOD guidelines; digital safety training.
+
+10. **Parent Involvement** – Mandatory absence reporting; notifications on attendance/performance; LMS portal for communication; appeal and grievance procedures.
+
+11. **Fees & Refunds** – Fee schedule, payment deadlines; refund eligibility on withdrawal; administrative fees; appeals via Finance Committee.
+
+12. **Grievance & Appeals** – Multi‐step resolution: informal → formal committee → external arbitration; timelines and confidentiality.
+
+13. **Safeguarding & Child Protection** – DSL oversight; reporting channels; staff vetting; annual training; digital safety.
+
+14. **Faculty Hiring & Training** – Qualifications, background checks; induction; CPD; yearly evaluations.
+
+15. **Withdrawal, Transfer & Alumni** – Exit procedures; transcript requests; alumni network access.
+
+16. **Content Creation & LMS Usage** – Standard templates; copyright compliance; version control; quality review.
+
+17. **Student Mental Health & Wellness** – AI and counselor triage; wellbeing modules; crisis intervention protocols.
+
+18. **AI Ethics & Transparency** – Explainable AI; data consent; bias monitoring; stakeholder feedback.
+
+19. **Curriculum** – Annual review; TEKS alignment; integration of Islamic and secular standards.
+
+20. **Staff Attendance** – Similar to student attendance with HR monitoring and leave policies.
+
+**II. Website & Brand Content (Extracted from NAAS Academy Website Draft)**
+
+* **Brand Statement:** US‑based Islamic academy blending American academics with Qur’an & Sunnah; mission to empower Ummah.
+* **Core Offerings:** Elementary → High School → Quranic studies; AI tutor "Dr. Naas" for personalized, multilingual support; Blended (online/in‑person) learning; TEKS‐aligned, US‑accredited.
+* **Key Features:** AI‑Driven adaptive learning; certified educators; digital citizenship; inclusivity; flexible pacing; global branches.
+* **Academic Model:** 50% AI assessments, 50% facilitator‐led; gamification; mobile LMS; discussion forums; analytics dashboard.
+* **Support Services:** Query Bot, Language Bot (50+ languages); parent and faculty portals; regular FAQs and resources.
+* **Islamic Pedagogy:** Integrated digital tools for Qur’anic comprehension; online workshops; ethical tech use.
+* **Faculties & Mentorship:** Dr. Naas + human facilitators; focus on metacognition, real‐world application, holistic growth.
+* **Admissions CTA:** AMS portal, trial period, scholarship info; contact via email/phone/portal.
+
 
             """
