@@ -11,20 +11,33 @@ from faster import transcribe_audio_faster_whisper, initialize_whisper_model
 from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 
 class SpeechToTextListener:
-    def __init__(self, language: str = "en-US"):
+    def __init__(self, language: str = "en-US", ai_assistant=None):
         self.language = language
-        self.active_connections = {}
+        self.active_connections = set()
         self.tts_client = A4F()
         self.is_processing = False
         self.audio_buffer = bytearray()
         
-        # Initialize Whisper model at startup
+        # Initialize Whisper model and OpenAI model at startup
         print("Initializing models at startup...")
         if not initialize_whisper_model(model_size="base", device="cpu", compute_type="int8"):
             print("Failed to initialize Whisper model!")
             raise RuntimeError("Failed to initialize Whisper model")
         print("Whisper model initialized successfully!")
-
+        
+        # Initialize AI assistant
+        if ai_assistant:
+            print("Initializing OpenAI model...")
+            try:
+                self.ai_assistant = ai_assistant
+                # Warm up the model with a test prompt
+                self.ai_assistant.interact_with_llm("Hello")
+                print("OpenAI model initialized successfully!")
+            except Exception as e:
+                print(f"Failed to initialize OpenAI model: {e}")
+                raise RuntimeError("Failed to initialize OpenAI model")
+        else:
+            self.ai_assistant = None
 
     def save_audio_as_mp3(self, audio_data: bytes, filename: str = "received.mp3") -> str:
         """Save audio data as MP3 file."""
@@ -121,10 +134,7 @@ class SpeechToTextListener:
         print(f"handle_websocket_connection: Type of websocket received: {type(websocket)}")
         print(f"New WebSocket connection established. Total connections: {len(self.active_connections) + 1}")
         try:
-            # Initialize a fresh AI assistant for this connection
-            from rag.AIVoiceAssistant import AIVoiceAssistant
-            ai_assistant = AIVoiceAssistant()
-            self.active_connections[websocket] = ai_assistant
+            self.active_connections.add(websocket)
             self.audio_buffer = bytearray()  # Reset buffer for new connection
             
             async for message in websocket:
@@ -150,11 +160,10 @@ class SpeechToTextListener:
                                 continue
 
                             # Process text with AI assistant
-                            ai_assistant = self.active_connections.get(websocket)
-                            if ai_assistant:
+                            if self.ai_assistant:
                                 try:
                                     print("handle_websocket_connection: Calling interact_with_llm.")
-                                    response = ai_assistant.interact_with_llm(text)
+                                    response = self.ai_assistant.interact_with_llm(text)
                                     print(f"handle_websocket_connection: AI response: {response}")
                                     # Send text response first
                                     response_msg = {"type": "response", "message": response}
@@ -225,11 +234,10 @@ class SpeechToTextListener:
                                         print(f"handle_websocket_connection: Transcribed text: '{text}'")
                                         # Process transcribed text but don't send it to frontend
                                         # Get AI response
-                                        ai_assistant = self.active_connections.get(websocket)
-                                        if ai_assistant:
+                                        if self.ai_assistant:
                                             try:
                                                 print("handle_websocket_connection: Calling interact_with_llm.")
-                                                response = ai_assistant.interact_with_llm(text)
+                                                response = self.ai_assistant.interact_with_llm(text)
                                                 print(f"handle_websocket_connection: AI response: {response}")
                                                 # Send text response first
                                                 response_msg = {"type": "response", "message": response}
@@ -310,8 +318,7 @@ class SpeechToTextListener:
             print(f"handle_websocket_connection: WebSocket connection error (outer try-except): {e}")
         finally:
             if websocket in self.active_connections:
-                # Clean up the AI assistant for this connection
-                del self.active_connections[websocket]
+                self.active_connections.remove(websocket)
             print(f"handle_websocket_connection: WebSocket connection closed. Active connections: {len(self.active_connections)}")
             try:
                 # Always send a graceful close message
@@ -329,7 +336,10 @@ class SpeechToTextListener:
         return server
 
 if __name__ == "__main__":
-    listener = SpeechToTextListener(language="en-IN")
+    from rag.AIVoiceAssistant import AIVoiceAssistant
+
+    ai_assistant = AIVoiceAssistant()
+    listener = SpeechToTextListener(language="en-IN", ai_assistant=ai_assistant)
 
     async def main():
         server = await listener.start_websocket_server()
